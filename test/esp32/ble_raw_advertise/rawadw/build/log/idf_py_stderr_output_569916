@@ -1,0 +1,22 @@
+Traceback (most recent call last):
+  File "/usr/local/src/esp/esp-idf/components/esptool_py/esptool/esptool.py", line 22, in <module>
+    esptool._main()  # type: ignore
+  File "/home/akhe/.espressif/python_env/idf5.1_py3.10_env/lib/python3.10/site-packages/esptool/__init__.py", line 1022, in _main
+    main()
+  File "/home/akhe/.espressif/python_env/idf5.1_py3.10_env/lib/python3.10/site-packages/esptool/__init__.py", line 808, in main
+    esp.flash_set_parameters(flash_size_bytes(args.flash_size))
+  File "/home/akhe/.espressif/python_env/idf5.1_py3.10_env/lib/python3.10/site-packages/esptool/loader.py", line 1142, in flash_set_parameters
+    self.check_command(
+  File "/home/akhe/.espressif/python_env/idf5.1_py3.10_env/lib/python3.10/site-packages/esptool/loader.py", line 407, in check_command
+    val, data = self.command(op, data, chk, timeout=timeout)
+  File "/home/akhe/.espressif/python_env/idf5.1_py3.10_env/lib/python3.10/site-packages/esptool/loader.py", line 376, in command
+    p = self.read()
+  File "/home/akhe/.espressif/python_env/idf5.1_py3.10_env/lib/python3.10/site-packages/esptool/loader.py", line 308, in read
+    return next(self._slip_reader)
+StopIteration
+CMake Error at run_serial_tool.cmake:55 (message):
+  
+  /home/akhe/.espressif/python_env/idf5.1_py3.10_env/bin/python;;/usr/local/src/esp/esp-idf/components/esptool_py/esptool/esptool.py;--chip;esp32
+  failed
+
+

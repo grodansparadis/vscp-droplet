@@ -1,0 +1,30 @@
+Traceback (most recent call last):
+  File "/usr/local/src/esp/esp-idf/components/esptool_py/esptool/esptool.py", line 22, in <module>
+    esptool._main()  # type: ignore
+  File "/home/akhe/.espressif/python_env/idf5.1_py3.10_env/lib/python3.10/site-packages/esptool/__init__.py", line 1022, in _main
+    main()
+  File "/home/akhe/.espressif/python_env/idf5.1_py3.10_env/lib/python3.10/site-packages/esptool/__init__.py", line 664, in main
+    esp = esp or get_default_connected_device(
+  File "/home/akhe/.espressif/python_env/idf5.1_py3.10_env/lib/python3.10/site-packages/esptool/__init__.py", line 913, in get_default_connected_device
+    _esp.connect(before, connect_attempts)
+  File "/home/akhe/.espressif/python_env/idf5.1_py3.10_env/lib/python3.10/site-packages/esptool/loader.py", line 632, in connect
+    last_error = self._connect_attempt(
+  File "/home/akhe/.espressif/python_env/idf5.1_py3.10_env/lib/python3.10/site-packages/esptool/loader.py", line 573, in _connect_attempt
+    self.sync()
+  File "/home/akhe/.espressif/python_env/idf5.1_py3.10_env/lib/python3.10/site-packages/esptool/loader.py", line 446, in sync
+    val, _ = self.command()
+  File "/home/akhe/.espressif/python_env/idf5.1_py3.10_env/lib/python3.10/site-packages/esptool/loader.py", line 376, in command
+    p = self.read()
+  File "/home/akhe/.espressif/python_env/idf5.1_py3.10_env/lib/python3.10/site-packages/esptool/loader.py", line 308, in read
+    return next(self._slip_reader)
+  File "/home/akhe/.espressif/python_env/idf5.1_py3.10_env/lib/python3.10/site-packages/esptool/loader.py", line 1436, in slip_reader
+    read_bytes = port.read(1 if waiting == 0 else waiting)
+  File "/home/akhe/.espressif/python_env/idf5.1_py3.10_env/lib/python3.10/site-packages/serial/serialposix.py", line 595, in read
+    raise SerialException(
+serial.serialutil.SerialException: device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+CMake Error at run_serial_tool.cmake:55 (message):
+  
+  /home/akhe/.espressif/python_env/idf5.1_py3.10_env/bin/python;;/usr/local/src/esp/esp-idf/components/esptool_py/esptool/esptool.py;--chip;esp32
+  failed
+
+

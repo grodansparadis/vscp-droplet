@@ -1,0 +1,16 @@
+[1/5] cd /usr/local/src/VSCP/vscp-dropplet/test/ble_raw_advertise/rawadw/build/esp-idf/esptool_py && /home/akhe/.espressif/python_env/idf5.1_py3.10_env/bin/python /usr/local/src/esp/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /usr/local/src/VSCP/vscp-dropplet/test/ble_raw_advertise/rawadw/build/partition_table/partition-table.bin /usr/local/src/VSCP/vscp-dropplet/test/ble_raw_advertise/rawadw/build/rawadw.bin
+rawadw.bin binary size 0xb48f0 bytes. Smallest app partition is 0x100000 bytes. 0x4b710 bytes (29%) free.
+[2/5] Performing build step for 'bootloader'
+[1/1] cd /usr/local/src/VSCP/vscp-dropplet/test/ble_raw_advertise/rawadw/build/bootloader/esp-idf/esptool_py && /home/akhe/.espressif/python_env/idf5.1_py3.10_env/bin/python /usr/local/src/esp/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x1000 /usr/local/src/VSCP/vscp-dropplet/test/ble_raw_advertise/rawadw/build/bootloader/bootloader.bin
+Bootloader binary size 0x66c0 bytes. 0x940 bytes (8%) free.
+[2/3] cd /usr/local/src/esp/esp-idf/components/esptool_py && /usr/bin/cmake -D IDF_PATH=/usr/local/src/esp/esp-idf -D "SERIAL_TOOL=/home/akhe/.espressif/python_env/idf5.1_py3.10_env/bin/python;;/usr/local/src/esp/esp-idf/components/esptool_py/esptool/esptool.py;--chip;esp32" -D "SERIAL_TOOL_ARGS=--before=default_reset;--after=hard_reset;write_flash;@flash_args" -D WORKING_DIRECTORY=/usr/local/src/VSCP/vscp-dropplet/test/ble_raw_advertise/rawadw/build -P /usr/local/src/esp/esp-idf/components/esptool_py/run_serial_tool.cmake
+esptool esp32 -p /dev/ttyUSB6 -b 460800 --before=default_reset --after=hard_reset write_flash --flash_mode dio --flash_freq 40m --flash_size 4MB 0x1000 bootloader/bootloader.bin 0x10000 rawadw.bin 0x8000 partition_table/partition-table.bin
+esptool.py v4.3
+Serial port /dev/ttyUSB6
+Connecting......................................
+
+A fatal error occurred: Failed to connect to ESP32: Wrong boot mode detected (0x13)! The chip needs to be in download mode.
+For troubleshooting steps visit: https://docs.espressif.com/projects/esptool/en/latest/troubleshooting.html
+FAILED: CMakeFiles/flash /usr/local/src/VSCP/vscp-dropplet/test/ble_raw_advertise/rawadw/build/CMakeFiles/flash 
+cd /usr/local/src/esp/esp-idf/components/esptool_py && /usr/bin/cmake -D IDF_PATH=/usr/local/src/esp/esp-idf -D "SERIAL_TOOL=/home/akhe/.espressif/python_env/idf5.1_py3.10_env/bin/python;;/usr/local/src/esp/esp-idf/components/esptool_py/esptool/esptool.py;--chip;esp32" -D "SERIAL_TOOL_ARGS=--before=default_reset;--after=hard_reset;write_flash;@flash_args" -D WORKING_DIRECTORY=/usr/local/src/VSCP/vscp-dropplet/test/ble_raw_advertise/rawadw/build -P /usr/local/src/esp/esp-idf/components/esptool_py/run_serial_tool.cmake
+ninja: build stopped: subcommand failed.
