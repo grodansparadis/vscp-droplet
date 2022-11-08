@@ -1340,4 +1340,9 @@ app_main(void)
   server = start_webserver();
 
   espnow_init();
+
+  uint32_t ver;
+  esp_now_get_version(&ver);
+
+  ESP_LOGI(TAG, "Version: %X", ver);
 }
