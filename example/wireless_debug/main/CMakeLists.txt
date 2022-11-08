@@ -6,5 +6,5 @@
 # endif()
 
 idf_component_register(SRC_DIRS "."
-                       INCLUDE_DIRS "."
+	INCLUDE_DIRS "." "${ESPNOW_PATH}/components/utils/"
                        EMBED_TXTFILES ${embed_txt_files})

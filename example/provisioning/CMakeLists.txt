@@ -3,6 +3,10 @@
 cmake_minimum_required(VERSION 3.5)
 add_compile_options(-fdiagnostics-color=always)
 
+message($ENV{ESPNOW_PATH})
+message($ENV{IDF_PATH})
+set(ESPNOW_PATH $ENV{ESPNOW_PATH})
+
 if(NOT DEFINED ESPNOW_PATH)
     set(ESPNOW_PATH ${CMAKE_CURRENT_LIST_DIR}/../..)
 endif()

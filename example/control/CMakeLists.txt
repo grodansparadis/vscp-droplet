@@ -6,6 +6,10 @@ if(NOT DEFINED IDF_TARGET)
     set(IDF_TARGET "esp32")
 endif()
 
+message($ENV{ESPNOW_PATH})
+message($ENV{IDF_PATH})
+set(ESPNOW_PATH $ENV{ESPNOW_PATH})
+
 if(NOT DEFINED ESPNOW_PATH)
     set(ESPNOW_PATH ${CMAKE_CURRENT_LIST_DIR}/../..)
 endif()

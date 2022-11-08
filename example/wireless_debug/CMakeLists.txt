@@ -6,7 +6,12 @@ if(NOT DEFINED IDF_TARGET)
     set(IDF_TARGET "esp32")
 endif()
 
-set(ESPNOW_PATH ${CMAKE_CURRENT_LIST_DIR}/../..)
+message($ENV{ESPNOW_PATH})
+message($ENV{IDF_PATH})
+set(ESPNOW_PATH $ENV{ESPNOW_PATH})
+
+
+#set(ESPNOW_PATH ${CMAKE_CURRENT_LIST_DIR}/../..)
 set(EXTRA_COMPONENT_DIRS ${ESPNOW_PATH}/components
                          ${ESPNOW_PATH}/examples/wireless_debug/components)
 
