@@ -1,0 +1,5 @@
+version: "1.0.0"
+description: GPIO and ADC button driver
+dependencies:
+  idf:
+    version: ">=4.0"

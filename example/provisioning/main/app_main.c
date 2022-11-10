@@ -67,21 +67,21 @@ static esp_err_t responder_recv_callback(uint8_t *src_addr, void *data,
 
 static esp_err_t provisioning_responder()
 {
-    esp_err_t ret = ESP_OK;
-    espnow_prov_responder_t responder_info = {
-        .product_id = "responder_test"
-    };
-    espnow_prov_wifi_t wifi_config = {
-        .sta = {
-            .ssid = CONFIG_ESPNOW_WIFI_SSID,
-            .password = CONFIG_ESPNOW_WIFI_PASSWORD,
-        },
-    };
+  esp_err_t ret = ESP_OK;
+  espnow_prov_responder_t responder_info = {
+      .product_id = "responder_test"
+  };
+  espnow_prov_wifi_t wifi_config = {
+      .sta = {
+          .ssid = CONFIG_ESPNOW_WIFI_SSID,
+          .password = CONFIG_ESPNOW_WIFI_PASSWORD,
+      },
+  };
 
-    ret = espnow_prov_responder_start(&responder_info, pdMS_TO_TICKS(30 * 1000), &wifi_config, responder_recv_callback);
-    ESP_ERROR_RETURN(ret != ESP_OK, ret, "espnow_prov_responder_beacon");
+  ret = espnow_prov_responder_start(&responder_info, pdMS_TO_TICKS(30 * 1000), &wifi_config, responder_recv_callback);
+  ESP_ERROR_RETURN(ret != ESP_OK, ret, "espnow_prov_responder_beacon");
 
-    return ESP_OK;
+  return ESP_OK;
 }
 #endif
 

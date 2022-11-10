@@ -1,0 +1,15 @@
+dependencies:
+  espressif/button:
+    component_hash: a2a43fff3ae07048ba6e59d93dba56022816f8a084497f32c9503674c8769f50
+    source:
+      service_url: https://api.components.espressif.com/
+      type: service
+    version: 2.1.0
+  idf:
+    component_hash: null
+    source:
+      type: idf
+    version: 4.4.3
+manifest_hash: 9733f72125ea2617b2cad1357ad400bb1c439d6f8e0effebe4fa04f328ae5109
+target: esp32
+version: 1.0.0

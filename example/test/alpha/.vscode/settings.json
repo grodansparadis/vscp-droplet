@@ -1,0 +1,6 @@
+{
+  "files.associations": {
+    "espnow_ctrl.h": "c",
+    "espnow.h": "c"
+  }
+}
