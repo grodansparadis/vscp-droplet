@@ -1,0 +1,10 @@
+{
+  "files.associations": {
+    "espnow_example.h": "c",
+    "esp_tls_crypto.h": "c",
+    "esp_now.h": "c",
+    "led_strip.h": "c",
+    "button.h": "c",
+    "app_main.h": "c"
+  }
+}
