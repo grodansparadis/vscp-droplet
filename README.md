@@ -1,4 +1,4 @@
-# vscp-dropplet
+# vscp-droplet
 
 A VERY simple self forming network for wireless VSCP nodes
 
