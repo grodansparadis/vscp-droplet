@@ -1,0 +1,8 @@
+{
+  "files.associations": {
+    "espnow_ctrl.h": "c",
+    "espnow.h": "c",
+    "iot_button.h": "c",
+    "*.ipp": "c"
+  }
+}

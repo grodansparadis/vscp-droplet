@@ -62,7 +62,6 @@
 #endif
 
 const char *pop_data = "ESPNOW_POP";
-
 static const char *TAG = "espnow_alpha";
 
 static xQueueHandle s_vscp_espnow_queue;
@@ -687,7 +686,7 @@ app_main(void)
   ESP_ERROR_CHECK(ret);
 
   vscp_wifi_init();
-  //vscp_espnow_init();
+  vscp_espnow_init();
   espnow_config_t espnow_config = ESPNOW_INIT_CONFIG_DEFAULT();
   espnow_init(&espnow_config);
 

@@ -120,29 +120,39 @@ typedef struct {
 // ----------------------------------------------------------------------------
 
 
+/*!
+  ESP-NOW
+*/
+#define ESPNOW_SIZE_TX_BUF   10   /*!< Size for transmitt buffer >*/
+#define ESPNOW_SIZE_RX_BUF   20   /*!< Size for receive buffer >*/
+
+#define ESPNOW_MAXDELAY 512       // Ticks to wait for send queue access
+
 /* ESPNOW can work in both station and softap mode. It is configured in menuconfig. */
 #if CONFIG_ESPNOW_WIFI_MODE_STATION
 #define ESPNOW_WIFI_MODE WIFI_MODE_STA
 #define ESPNOW_WIFI_IF   ESP_IF_WIFI_STA
 #else
-#define ESPNOW_WIFI_MODE WIFI_MODE_AP
+#define ESPNOW_WIFI_MODE WIFI_MODE_APSTA // WIFI_MODE_AP
 #define ESPNOW_WIFI_IF   ESP_IF_WIFI_AP
 #endif
 
 #define ESPNOW_QUEUE_SIZE           6
 
-#define IS_BROADCAST_ADDR(addr) (memcmp(addr, s_broadcast_mac, ESP_NOW_ETH_ALEN) == 0)
+#define IS_BROADCAST_ADDR(addr) (memcmp(addr, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN) == 0)
 
 typedef enum {
   ESPNOW_SEND_CB,
   ESPNOW_RECV_CB,
 } espnow_event_id_t;
 
+// Send callback statructure
 typedef struct {
   uint8_t mac_addr[ESP_NOW_ETH_ALEN];
   esp_now_send_status_t status;
 } espnow_event_send_cb_t;
 
+// Receive callback statructure
 typedef struct {
   uint8_t mac_addr[ESP_NOW_ETH_ALEN];
   uint8_t *data;
@@ -194,6 +204,61 @@ typedef struct {
 } espnow_send_param_t;
 
 
+// ***
+
+/**!
+ * Context object 
+ */
+typedef struct {
+  uint16_t seq;
+} vscp_espnow_context_t;
+
+
+typedef enum {
+  VSCP_ESPNOW_SEND_EVT,
+  VSCP_ESPNOW_RECV_EVT,
+} vscp_espnow_event_id_t;
+
+// espnow send callback status message
+typedef struct {
+  uint8_t mac_addr[ESP_NOW_ETH_ALEN];         // Destination address
+  esp_now_send_status_t status;               // Status of send
+} vscp_espnow_event_send_cb_t;
+
+// espnow receive callback status and message 
+typedef struct {
+  uint8_t mac_addr[ESP_NOW_ETH_ALEN];         // Originating address
+  uint8_t buf[VSCP_ESPNOW_PACKET_MAX_SIZE];   // Incoming frame
+  uint8_t len;                                // Real length of incoming frame
+} vscp_espnow_event_recv_cb_t;
+
+typedef union {
+  vscp_espnow_event_send_cb_t send_cb;
+  vscp_espnow_event_recv_cb_t recv_cb;
+} vscp_espnow_event_info_t;
+
+/* When ESPNOW sending or receiving callback function is called, post event to ESPNOW task. */
+typedef struct {
+  vscp_espnow_event_id_t id;
+  vscp_espnow_event_info_t info;
+} vscp_espnow_event_post_t;
+
+enum {
+  VSCP_ESPNOW_DATA_BROADCAST,
+  VSCP_ESPNOW_DATA_UNICAST,
+  VSCP_ESPNOW_DATA_MAX,
+};
+
+/* Parameters of sending ESPNOW data. */
+// typedef struct {
+//   //int len;                              // Length of ESPNOW data to be sent, unit: byte.
+//   //uint8_t *buffer;                      // Buffer pointing to ESPNOW data.
+//   uint8_t dest_mac[ESP_NOW_ETH_ALEN];   // MAC address of destination device.
+// } vscp_espnow_send_param_t;
+
+
+
+
 // ----------------------------------------------------------------------------
 
 
@@ -222,5 +287,47 @@ uint32_t getMilliSeconds(void);
  */
 bool
 validate_user(const char *user, const char *password);
+
+/**
+ * @brief Get the device service name object
+ * 
+ * @param service_name 
+ * @param max 
+ */
+void
+get_device_service_name(char *service_name, size_t max);
+
+/**
+ * @brief 
+ * 
+ * @param session_id 
+ * @param inbuf 
+ * @param inlen 
+ * @param outbuf 
+ * @param outlen 
+ * @param priv_data 
+ * @return esp_err_t 
+ */
+esp_err_t
+custom_prov_data_handler(uint32_t session_id,
+                         const uint8_t *inbuf,
+                         ssize_t inlen,
+                         uint8_t **outbuf,
+                         ssize_t *outlen,
+                         void *priv_data);
+
+/**
+ * @brief 
+ * 
+ * @param name 
+ * @param username 
+ * @param pop 
+ * @param transport 
+ */
+void
+wifi_prov_print_qr(const char *name, 
+                    const char *username, 
+                    const char *pop, 
+                    const char *transport);                         
 
 #endif

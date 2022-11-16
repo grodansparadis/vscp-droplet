@@ -9,6 +9,8 @@
 #ifndef _VSCP_PROJDEFS_H_
 #define _VSCP_PROJDEFS_H_
 
+
+
 /*
   Demo related projdefs
 */

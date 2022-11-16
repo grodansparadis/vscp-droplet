@@ -1,63 +1,63 @@
-menu "VSCP WCANG Configuration"
+menu "ESPNOW Alpha Node Configuration"
 
-    choice WCANG_PROV_TRANSPORT
+    choice PROV_TRANSPORT
         bool "Provisioning Transport"
-        default WCANG_PROV_TRANSPORT_SOFTAP if IDF_TARGET_ESP32S2
-        default WCANG_PROV_TRANSPORT_BLE
+        default PROV_TRANSPORT_SOFTAP if IDF_TARGET_ESP32S2
+        default PROV_TRANSPORT_BLE
         help
-            Wi-Fi provisioning component offers both, SoftAP and BLE transports. Choose any one.
+            Wi-Fi provisioning component offers both, SoftAP and BLE transports. Choose one.
 
-        config WCANG_PROV_TRANSPORT_BLE
+        config PROV_TRANSPORT_BLE
             bool "BLE"
             select BT_ENABLED
             depends on !IDF_TARGET_ESP32S2
-        config WCANG_PROV_TRANSPORT_SOFTAP
+        config PROV_TRANSPORT_SOFTAP
             bool "Soft AP"
     endchoice
 
-    choice WCANG_PROV_SECURITY_VERSION
+    choice PROV_SECURITY_VERSION
         bool "Protocomm security version"
-        default WCANG_PROV_SECURITY_VERSION_1
+        default PROV_SECURITY_VERSION_1
         help
             Wi-Fi provisioning component offers 3 security versions.
-            The example offers a choice between security version 1 and 2.
+            Alfa nodes need security version 1 or 2.
 
-        config WCANG_PROV_SECURITY_VERSION_1
+        config PROV_SECURITY_VERSION_1
             bool "Security version 1"
             select ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1
 
-        config WCANG_PROV_SECURITY_VERSION_2
+        config PROV_SECURITY_VERSION_2
             bool "Security version 2"
             select ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2
     endchoice
 
-    choice WCANG_PROV_MODE
+    choice PROV_MODE
         bool "Security version 2 mode"
-        depends on WCANG_PROV_SECURITY_VERSION_2
-        default WCANG_PROV_SEC2_DEV_MODE
+        depends on PROV_SECURITY_VERSION_2
+        default PROV_SEC2_DEV_MODE
 
-        config WCANG_PROV_SEC2_DEV_MODE
+        config PROV_SEC2_DEV_MODE
             bool "Security version 2 development mode"
-            depends on WCANG_PROV_SECURITY_VERSION_2
+            depends on PROV_SECURITY_VERSION_2
             help
                 This enables the development mode for
                 security version 2.
                 Please note that this mode is NOT recommended for production purpose.
 
-        config WCANG_PROV_SEC2_PROD_MODE
+        config PROV_SEC2_PROD_MODE
             bool "Security version 2 production mode"
-            depends on WCANG_PROV_SECURITY_VERSION_2
+            depends on PROV_SECURITY_VERSION_2
             help
                 This enables the production mode for
                 security version 2.
     endchoice
 
-    config WCANG_PROV_TRANSPORT
+    config PROV_TRANSPORT
         int
-        default 1 if WCANG_PROV_TRANSPORT_BLE
-        default 2 if WCANG_PROV_TRANSPORT_SOFTAP
+        default 1 if PROV_TRANSPORT_BLE
+        default 2 if PROV_TRANSPORT_SOFTAP
 
-    config WCANG_RESET_PROVISIONED
+    config RESET_PROVISIONED
         bool
         default n
         prompt "Reset provisioned status of the device"
@@ -65,7 +65,7 @@ menu "VSCP WCANG Configuration"
             This erases the NVS to reset provisioned status of the device on every reboot.
             Provisioned status is determined by the Wi-Fi STA configuration, saved on the NVS.
 
-    config WCANG_RESET_PROV_MGR_ON_FAILURE
+    config RESET_PROV_MGR_ON_FAILURE
         bool
         default y
         prompt "Reset provisioned credentials and state machine after session failure"
@@ -73,23 +73,23 @@ menu "VSCP WCANG Configuration"
             Enable reseting provisioned credentials and state machine after session failure.
             This will restart the provisioning service after retries are exhausted.
 
-    config WCANG_PROV_MGR_MAX_RETRY_CNT
+    config PROV_MGR_MAX_RETRY_CNT
         int
         default 5
         prompt "Max retries before reseting provisioning state machine"
-        depends on WCANG_RESET_PROV_MGR_ON_FAILURE
+        depends on RESET_PROV_MGR_ON_FAILURE
         help
             Set the Maximum retry to avoid reconnecting to an inexistent AP or if credentials
             are misconfigured. Provisioned credentials are erased and internal state machine
             is reset after this threshold is reached.
 
-    config WCANG_PROV_SHOW_QR
+    config PROV_SHOW_QR
         bool "Show provisioning QR code"
         default y
         help
             Show the QR code for provisioning.
 
-    config WCANG_PROV_USING_BLUEDROID
+    config PROV_USING_BLUEDROID
         bool
         depends on (BT_BLUEDROID_ENABLED && (IDF_TARGET_ESP32C3 || IDF_TARGET_ESP32S3))
         select BT_BLE_42_FEATURES_SUPPORTED
@@ -128,30 +128,105 @@ menu "VSCP WCANG Configuration"
         help
             The channel on which sending and receiving ESPNOW data.
 
-    config ESPNOW_SEND_COUNT
-        int "Send count"
-        default 100
-        range 1 65535
-        help
-            Total count of unicast ESPNOW data to be sent.
-
-    config ESPNOW_SEND_DELAY
-        int "Send delay"
-        default 1000
-        range 0 65535
-        help
-            Delay between sending two ESPNOW data, unit: ms.
-
-    config ESPNOW_SEND_LEN
-        int "Send len"
-        range 10 250
-        default 10
-        help
-            Length of ESPNOW data to be sent, unit: byte.
-
     config ESPNOW_ENABLE_LONG_RANGE
         bool "Enable Long Range"
         default "n"
         help
-            When enable long range, the PHY rate of ESP32 will be 512Kbps or 256Kbps        
+            When enable long range, the PHY rate of ESP32 will be 512Kbps or 256Kbps  
+    config FIRMWARE_UPGRADE_URL
+        string "Firmware upgrade url endpoint"
+        default "http://192.168.0.3:8070/hello-world.bin"
+        depends on ESPNOW_OTA_INITATOR
+        help
+            URL of server which hosts the firmware image.
+
+    choice ESPNOW_OTA_MODE
+        bool "ESP-NOW Mode"
+        default ESPNOW_OTA_INITATOR
+        help
+            Select the ESP-NOW Mode.
+
+        config ESPNOW_OTA_INITATOR
+            bool "ESP-NOW OTA initator Mode"
+            help
+                Select the ESP-NOW OTA initator Mode.
+
+        config ESPNOW_OTA_RESPONDER
+            bool "ESP-NOW OTA responder Mode"
+            help
+                Select the ESP-NOW OTA responder Mode.
+
+    endchoice
+
+    config ESPNOW_OTA_MODE
+        int
+        default 0 if ESPNOW_OTA_INITATOR
+        default 1 if ESPNOW_OTA_RESPONDER   
+
+    config ESPNOW_SESSION_POP
+        string "Proof of Possession"
+        default "espnow_pop"
+        help
+            Proof of Possession (PoP) string used to authorize session and derive shared key.
+
+    choice ESPNOW_SEC_MODE
+        bool "ESP-NOW Mode"
+        default ESPNOW_SEC_INITATOR
+        help
+            Select the ESP-NOW Mode.
+
+        config ESPNOW_SEC_INITATOR
+            bool "ESP-NOW SEC initator Mode"
+            help
+                Select the ESP-NOW SEC initator Mode.
+
+        config ESPNOW_SEC_RESPONDER
+            bool "ESP-NOW SEC responder Mode"
+            help
+                Select the ESP-NOW SEC responder Mode.
+
+    endchoice
+
+    config ESPNOW_SEC_MODE
+        int
+        default 0 if ESPNOW_SEC_INITATOR
+        default 1 if ESPNOW_SEC_RESPONDER           
+
+    choice ESPNOW_PROV_MODE
+        bool "ESP-NOW Mode"
+        default ESPNOW_PROV_INITATOR
+        help
+            Select the ESP-NOW Mode.
+
+        config ESPNOW_PROV_INITATOR
+            bool "ESP-NOW provisioning initiator Mode"
+            help
+                Select the ESP-NOW provisioning initiator Mode.
+
+        config ESPNOW_PROV_RESPONDER
+            bool "ESP-NOW provisioning responder Mode"
+            help
+                Select the ESP-NOW provisioning responder Mode.
+
+    endchoice
+
+    config ESPNOW_PROV_MODE
+        int
+        default 0 if ESPNOW_PROV_INITATOR
+        default 1 if ESPNOW_PROV_RESPONDER
+
+        config ESPNOW_WIFI_SSID
+            string "WiFi SSID"
+            depends on ESPNOW_PROV_RESPONDER
+            default "myssid"
+            help
+                SSID (network name) for the example to connect to.
+
+        config ESPNOW_WIFI_PASSWORD
+            string "WiFi Password"
+            depends on ESPNOW_PROV_RESPONDER
+            default "mypassword"
+            help
+                WiFi password (WPA or WPA2) for the example to use.
+  
 endmenu

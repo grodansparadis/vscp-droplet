@@ -7,8 +7,10 @@ if(NOT DEFINED IDF_TARGET)
   set(IDF_TARGET "esp32")
 endif()
 
+set(EXTRA_COMPONENT_DIRS $ENV{ESPNOW_PATH}/components)
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(vscp-dropplet-gw)
+project(vscp-dropplet-alpha)
 
 git_describe(PROJECT_VERSION ${COMPONENT_DIR})
 message("Project commit: " ${PROJECT_VERSION})

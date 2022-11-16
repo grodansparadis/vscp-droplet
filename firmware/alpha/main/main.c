@@ -1,7 +1,7 @@
 /*
   File: main.c
 
-  VSCP Wireless CAN4VSCP Gateway (VSCP-WCANG, Frankfurt-WiFi)
+  VSCP Droplet alfa node
 
   This file is part of the VSCP (https://www.vscp.org)
 
@@ -30,22 +30,24 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <freertos/FreeRTOS.h>
 #include "freertos/semphr.h"
 #include "freertos/timers.h"
+#include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
 
+#include "driver/ledc.h"
+#include "iot_button.h"
 #include <driver/gpio.h>
-#include <driver/temperature_sensor.h>
+
 #include <esp_event.h>
 
 #include <esp_task_wdt.h>
 
-#include <esp_http_server.h>
 #include "esp_crc.h"
 #include "esp_now.h"
+#include <esp_http_server.h>
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_timer.h>
@@ -53,187 +55,103 @@
 #include <esp_wifi.h>
 #include <nvs_flash.h>
 
-#include <wifi_provisioning/manager.h>
+#include <esp_storage.h>
+#include <esp_utils.h>
 
-#ifdef CONFIG_WCANG_PROV_TRANSPORT_BLE
+#include <espnow.h>
+#include <espnow_ctrl.h>
+#include <espnow_security.h>
+
+#ifdef CONFIG_PROV_TRANSPORT_BLE
 #include <wifi_provisioning/scheme_ble.h>
-#endif /* CONFIG_WCANG_PROV_TRANSPORT_BLE */
+#endif /* CONFIG_PROV_TRANSPORT_BLE */
 
-#ifdef CONFIG_WCANG_PROV_TRANSPORT_SOFTAP
+#ifdef CONFIG_PROV_TRANSPORT_SOFTAP
 #include <wifi_provisioning/scheme_softap.h>
-#endif /* CONFIG_WCANG_PROV_TRANSPORT_SOFTAP */
+#endif /* CONFIG_PROV_TRANSPORT_SOFTAP */
+
 #include "qrcode.h"
 
-#include <vscp.h>
 #include "websrv.h"
 
+#include <vscp.h>
+#include <vscp_class.h>
+#include <vscp_type.h>
+
+#include "vscp_espnow.h"
+
 #include "main.h"
+#include "wifiprov.h"
 
-static const char *TAG = "main";
-
-/**!
- * Configure temperature sensor
- */
-temperature_sensor_config_t cfgTempSensor = {
-  .range_min = 20,
-  .range_max = 50,
-};
+const char *pop_data   = "ESPNOW_VSCP_ALPHA";
+static const char *TAG = "espnow_alpha";
 
 // Handle for nvs storage
-nvs_handle_t nvsHandle;
+nvs_handle_t g_nvsHandle;
 
 // GUID for unit
-uint8_t device_guid[16];
-
-SemaphoreHandle_t ctrl_task_sem;
+uint8_t g_device_guid[16];
 
 // ESP-NOW
 
-#define ESPNOW_MAXDELAY 512 // Delat for send queue
+SemaphoreHandle_t g_ctrl_task_sem;
+
+// Message queues for espnow messages
+QueueHandle_t g_tx_msg_queue;
+QueueHandle_t g_rx_msg_queue;
+
+#ifdef CONFIG_IDF_TARGET_ESP32C3
+#define BOOT_KEY_GPIIO  GPIO_NUM_9
+#define CONFIG_LED_GPIO GPIO_NUM_2
+#elif CONFIG_IDF_TARGET_ESP32S3
+#define BOOT_KEY_GPIIO  GPIO_NUM_0
+#define CONFIG_LED_GPIO GPIO_NUM_2
+#else
+#define BOOT_KEY_GPIIO  GPIO_NUM_0
+#define CONFIG_LED_GPIO GPIO_NUM_2
+#endif
+
+static xQueueHandle s_vscp_espnow_queue; // espnow send queue
 
 static QueueHandle_t s_espnow_queue;
 
-static uint8_t s_broadcast_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
-static uint16_t s_espnow_seq[ESPNOW_DATA_MAX]    = { 0, 0 };
+static uint16_t s_espnow_seq[ESPNOW_DATA_MAX] = { 0, 0 };
+
+static uint8_t s_vscp_broadcast_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+
+// Provisioning state
+static espnow_ctrl_status_t s_espnow_ctrl_state = ESPNOW_CTRL_INIT;
+
+espnow_sec_t *g_sec; // espnow security structure
 
 // Forward declarations
 
 static void
-espnow_deinit(espnow_send_param_t *send_param);
+vscp_espnow_deinit(void *param);
 
-// Provisioning
-
-#if CONFIG_WCANG_PROV_SECURITY_VERSION_2
-
-#if CONFIG_WCANG_PROV_SEC2_DEV_MODE
-#define WCANG_PROV_SEC2_USERNAME "testuser"
-#define WCANG_PROV_SEC2_PWD      "testpassword"
-
-/* This salt,verifier has been generated for username = "testuser" and password
- * = "testpassword" IMPORTANT NOTE: For production cases, this must be unique to
- * every device and should come from device manufacturing partition.*/
-static const char sec2_salt[] = { 0x2f, 0x3d, 0x3c, 0xf8, 0x0d, 0xbd, 0x0c, 0xa9,
-                                  0x6f, 0x30, 0xb4, 0x4d, 0x89, 0xd5, 0x2f, 0x0e };
-
-// 24*16 = 384 * 8 = 3072
-static const char sec2_verifier[] = {
-  0xf2, 0x9f, 0xc1, 0xf5, 0x28, 0x4a, 0x11, 0x74, 0xb4, 0x24, 0x09, 0x23, 0xd8, 0x27, 0xb7, 0x5a, 0x95, 0x3a, 0x99,
-  0xed, 0xf4, 0x6e, 0xe9, 0x8c, 0x4f, 0x07, 0xf2, 0xf5, 0x43, 0x3d, 0x7f, 0x9a, 0x11, 0x60, 0x66, 0xaf, 0xcd, 0xa5,
-  0xf6, 0xfa, 0xcb, 0x06, 0xe9, 0xc5, 0x3f, 0x4d, 0x77, 0x16, 0x4c, 0x68, 0x6d, 0x7f, 0x7c, 0xd7, 0xc7, 0x5a, 0x83,
-  0xc0, 0xfb, 0x94, 0x2d, 0xa9, 0x60, 0xf0, 0x09, 0x11, 0xa0, 0xe1, 0x95, 0x33, 0xd1, 0x30, 0x7f, 0x82, 0x1b, 0x1b,
-  0x0f, 0x6d, 0xf1, 0xdc, 0x93, 0x1c, 0x20, 0xa7, 0xc0, 0x8d, 0x48, 0x38, 0xff, 0x46, 0xb9, 0xaf, 0xf7, 0x93, 0x78,
-  0xae, 0xff, 0xb8, 0x3b, 0xdf, 0x99, 0x7b, 0x64, 0x47, 0x02, 0xba, 0x01, 0x39, 0x0f, 0x5c, 0xd8, 0x4e, 0x6f, 0xc8,
-  0xd0, 0x82, 0x7f, 0x2d, 0x33, 0x1a, 0x09, 0x65, 0x77, 0x85, 0xbc, 0x8a, 0x84, 0xe0, 0x46, 0x7e, 0x3b, 0x0e, 0x6e,
-  0x3b, 0xdf, 0x70, 0x17, 0x70, 0x0a, 0xbc, 0x84, 0x67, 0xfa, 0xf9, 0x84, 0x53, 0xda, 0xb4, 0xca, 0x38, 0x71, 0xe4,
-  0x06, 0xf6, 0x7d, 0xc8, 0x32, 0xbb, 0x91, 0x0c, 0xe7, 0xd3, 0x59, 0xb6, 0x03, 0xed, 0x8e, 0x0d, 0x91, 0x9c, 0x09,
-  0xd7, 0x6f, 0xd5, 0xca, 0x55, 0xc5, 0x58, 0x0f, 0x95, 0xb5, 0x83, 0x65, 0x6f, 0x2d, 0xbc, 0x94, 0x0f, 0xbb, 0x0f,
-  0xd3, 0x42, 0xa5, 0xfe, 0x15, 0x7f, 0xf9, 0xa8, 0x16, 0xe6, 0x58, 0x9b, 0x4c, 0x0f, 0xd3, 0x83, 0x2c, 0xac, 0xe4,
-  0xbf, 0xa3, 0x96, 0x1e, 0xb6, 0x6f, 0x59, 0xe6, 0xd1, 0x0e, 0xd4, 0x27, 0xb6, 0x05, 0x34, 0xec, 0x8c, 0xf8, 0x72,
-  0xbb, 0x04, 0x7b, 0xa4, 0x49, 0x3d, 0x6d, 0xa9, 0x99, 0xfc, 0x0a, 0x2b, 0xd8, 0x46, 0xa8, 0xd1, 0x46, 0x61, 0x5c,
-  0x96, 0xd2, 0x43, 0xcd, 0xea, 0x7f, 0x6a, 0x50, 0x59, 0x0d, 0x0e, 0xa1, 0xb3, 0x94, 0x5a, 0x34, 0xe0, 0x1e, 0x95,
-  0x56, 0x68, 0xb4, 0xbc, 0xf1, 0x08, 0x54, 0xcb, 0x42, 0x41, 0xc6, 0x78, 0xad, 0x71, 0x84, 0x1c, 0x29, 0xb8, 0x33,
-  0x79, 0x1c, 0x10, 0xdd, 0x07, 0xc8, 0x91, 0x21, 0x85, 0x89, 0x76, 0xd7, 0x37, 0xdf, 0x5b, 0x19, 0x33, 0x4e, 0x17,
-  0x67, 0x02, 0x0f, 0x1b, 0xb9, 0x2f, 0xa4, 0xdc, 0xdd, 0x75, 0x32, 0x96, 0x87, 0xdd, 0x66, 0xc3, 0x33, 0xc1, 0xfc,
-  0x4c, 0x27, 0x63, 0xb9, 0x14, 0x72, 0x76, 0x65, 0xb8, 0x90, 0x2b, 0xeb, 0x7a, 0xde, 0x71, 0x97, 0xf3, 0x6b, 0xc9,
-  0x8e, 0xdf, 0xfc, 0x6e, 0x13, 0xcc, 0x1b, 0x2b, 0x54, 0x1a, 0x6e, 0x3d, 0xe6, 0x1c, 0xec, 0x5d, 0xa1, 0xf1, 0xd4,
-  0x86, 0x9d, 0xcd, 0xb9, 0xe8, 0x98, 0xf1, 0xe5, 0x16, 0xa5, 0x48, 0xe5, 0xec, 0x12, 0xe8, 0x17, 0xe2, 0x55, 0xb5,
-  0xb3, 0x7c, 0xce, 0xfd
-};
-#endif
-
-///////////////////////////////////////////////////////////////////////////////
-// wcang_get_sec2_salt
-//
-
-static esp_err_t
-wcang_get_sec2_salt(const char **salt, uint16_t *salt_len)
-{
-#if CONFIG_WCANG_PROV_SEC2_DEV_MODE
-  ESP_LOGI(TAG, "Development mode: using hard coded salt");
-  *salt     = sec2_salt;
-  *salt_len = sizeof(sec2_salt);
-  return ESP_OK;
-#elif CONFIG_WCANG_PROV_SEC2_PROD_MODE
-  ESP_LOGE(TAG, "Not implemented!");
-  return ESP_FAIL;
-#endif
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// wcang_get_sec2_verifier
-//
-
-static esp_err_t
-wcang_get_sec2_verifier(const char **verifier, uint16_t *verifier_len)
-{
-#if CONFIG_WCANG_PROV_SEC2_DEV_MODE
-  ESP_LOGI(TAG, "Development mode: using hard coded verifier");
-  *verifier     = sec2_verifier;
-  *verifier_len = sizeof(sec2_verifier);
-  return ESP_OK;
-#elif CONFIG_WCANG_PROV_SEC2_PROD_MODE
-  /* This code needs to be updated with appropriate implementation to provide
-   * verifier */
-  ESP_LOGE(TAG, "Not implemented!");
-  return ESP_FAIL;
-#endif
-}
-#endif
-
-/* Signal Wi-Fi events on this event-group */
+// Signal Wi-Fi events on this event-group
 const int WIFI_CONNECTED_EVENT = BIT0;
 static EventGroupHandle_t wifi_event_group;
 
-#define PROV_QR_VERSION       "v1"
-#define PROV_TRANSPORT_SOFTAP "softap"
-#define PROV_TRANSPORT_BLE    "ble"
-#define QRCODE_BASE_URL       "https://espressif.github.io/esp-jumpstart/qrcode.html"
-
 ///////////////////////////////////////////////////////////////////////////////
-// wifi_init_sta
+// vscp_wifi_init
 //
-
-// static void
-// wifi_init_sta(void)
-// {
-//   /* Start Wi-Fi in station mode */
-//   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-//   ESP_ERROR_CHECK(esp_wifi_start());
-// }
-
-///////////////////////////////////////////////////////////////////////////////
-// wifi_init
-//
-// WiFi should start before using ESPNOW
+// WiFi should start before using espnow
 //
 
 static void
-wifi_init(void)
+vscp_wifi_init(void)
 {
-  // ESP_ERROR_CHECK(esp_netif_init());
-  // ESP_ERROR_CHECK(esp_event_loop_create_default());
-  // wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-  // ESP_ERROR_CHECK( esp_wifi_init(&cfg) );
-  // ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+  ESP_ERROR_CHECK(esp_netif_init());
 
-  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+  ESP_ERROR_CHECK(esp_event_loop_create_default());
+  wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+  ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+  ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+  ESP_ERROR_CHECK(esp_wifi_set_mode(ESPNOW_WIFI_MODE));
+  // esp_wifi_set_mode(WIFI_MODE_APSTA);
+  ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
   ESP_ERROR_CHECK(esp_wifi_start());
-
-  
-  EventBits_t uxBits = xEventGroupWaitBits(
-            wifi_event_group,             // The event group being tested. 
-            WIFI_CONNECTED_EVENT,         // The bits within the event group to wait for. 
-            pdFALSE,                      // BIT_0 & BIT_4 should be cleared before returning. 
-            pdFALSE,                      // Don't wait for both bits, either bit will do. 
-            1000 / portTICK_PERIOD_MS );  // Wait a maximum of 100ms for either bit to be set. 
-
-  if (uxBits & WIFI_CONNECTED_EVENT) {    
-    ESP_LOGI(TAG,"CONNECTED");
-    //vTaskDelay(5000 / portTICK_PERIOD_MS);
-    //ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
-    //ESP_ERROR_CHECK(esp_wifi_set_channel(CONFIG_ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE));
-    //ESP_ERROR_CHECK(esp_wifi_set_promiscuous(false));
-  }
 
 #if CONFIG_ESPNOW_ENABLE_LONG_RANGE
   ESP_ERROR_CHECK(esp_wifi_set_protocol(ESPNOW_WIFI_IF,
@@ -255,7 +173,7 @@ espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status)
   espnow_event_t evt;
   espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
 
-  ESP_LOGI(TAG, "Send cb");
+  ESP_LOGI(TAG, "espnow Send cb");
 
   if (mac_addr == NULL) {
     ESP_LOGE(TAG, "Send cb arg error");
@@ -265,6 +183,8 @@ espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status)
   evt.id = ESPNOW_SEND_CB;
   memcpy(send_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
   send_cb->status = status;
+
+  // Report message as sent
   if (xQueueSend(s_espnow_queue, &evt, ESPNOW_MAXDELAY) != pdTRUE) {
     ESP_LOGW(TAG, "Send send queue fail");
   }
@@ -280,7 +200,7 @@ espnow_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
   espnow_event_t evt;
   espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
 
-  ESP_LOGI(TAG, "Recv cb");
+  ESP_LOGI(TAG, "espnow recv cb");
 
   if (mac_addr == NULL || data == NULL || len <= 0) {
     ESP_LOGE(TAG, "Receive cb arg error");
@@ -369,15 +289,16 @@ espnow_task(void *pvParameter)
   int recv_magic     = 0;
   bool is_broadcast  = false;
   int ret;
+  static int cnt = 0;
 
   vTaskDelay(5000 / portTICK_PERIOD_MS);
   ESP_LOGI(TAG, "Start sending broadcast data");
 
-  /* Start sending broadcast ESPNOW data. */
+  // Start sending broadcast ESPNOW data.
   espnow_send_param_t *send_param = (espnow_send_param_t *) pvParameter;
   if (esp_now_send(send_param->dest_mac, send_param->buffer, send_param->len) != ESP_OK) {
     ESP_LOGE(TAG, "Send error");
-    espnow_deinit(send_param);
+    espnow_deinit();
     vTaskDelete(NULL);
   }
 
@@ -386,22 +307,26 @@ espnow_task(void *pvParameter)
   while (xQueueReceive(s_espnow_queue, &evt, portMAX_DELAY) == pdTRUE) {
 
     switch (evt.id) {
-    
+
       case ESPNOW_SEND_CB: {
         espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
         is_broadcast                    = IS_BROADCAST_ADDR(send_cb->mac_addr);
 
-        ESP_LOGD(TAG, "Send data to ff:ff:ff:ff:ff:fe:" MACSTR ":00:00, status1: %d", MAC2STR(send_cb->mac_addr), send_cb->status);
+        ESP_LOGD(TAG,
+                 "Send frame %d to ff:ff:ff:ff:ff:fe:" MACSTR ":00:00, status1: %d",
+                 cnt++,
+                 MAC2STR(send_cb->mac_addr),
+                 send_cb->status);
 
         if (is_broadcast && (send_param->broadcast == false)) {
           break;
         }
 
         if (!is_broadcast) {
-          //send_param->count--;
+          // send_param->count--;
           if (send_param->count == 0) {
             ESP_LOGI(TAG, "Send done");
-            espnow_deinit(send_param);
+            espnow_deinit();
             vTaskDelete(NULL);
           }
         }
@@ -411,21 +336,23 @@ espnow_task(void *pvParameter)
           vTaskDelay(send_param->delay / portTICK_PERIOD_MS);
         }
 
-        ESP_LOGI(TAG, "send data to ff:ff:ff:ff:ff:fe:" MACSTR ":00:00", MAC2STR(send_cb->mac_addr));
+        ESP_LOGI(TAG, "send frame %d to ff:ff:ff:ff:ff:fe:" MACSTR ":00:00", cnt++, MAC2STR(send_cb->mac_addr));
 
         memcpy(send_param->dest_mac, send_cb->mac_addr, ESP_NOW_ETH_ALEN);
         espnow_data_prepare(send_param);
 
-        // Send the next data after the previous data is sent. 
+        // Send the next data after the previous data is sent.
         if (esp_now_send(send_param->dest_mac, send_param->buffer, send_param->len) != ESP_OK) {
           ESP_LOGE(TAG, "Send error");
-          espnow_deinit(send_param);
+          espnow_deinit();
           vTaskDelete(NULL);
         }
         break;
       }
 
       case ESPNOW_RECV_CB: {
+
+        ESP_LOGE(TAG, "ESPNOW_RECV_CB");
 
         espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
 
@@ -447,7 +374,7 @@ espnow_task(void *pvParameter)
             esp_now_peer_info_t *peer = malloc(sizeof(esp_now_peer_info_t));
             if (peer == NULL) {
               ESP_LOGE(TAG, "Malloc peer information fail");
-              espnow_deinit(send_param);
+              espnow_deinit();
               vTaskDelete(NULL);
             }
             memset(peer, 0, sizeof(esp_now_peer_info_t));
@@ -460,7 +387,7 @@ espnow_task(void *pvParameter)
             free(peer);
           }
 
-          // Indicates that the device has received broadcast ESPNOW data. 
+          // Indicates that the device has received broadcast ESPNOW data.
           if (send_param->state == 0) {
             send_param->state = 1;
           }
@@ -476,14 +403,14 @@ espnow_task(void *pvParameter)
              */
             if (send_param->unicast == false && send_param->magic >= recv_magic) {
               ESP_LOGI(TAG, "Start sending unicast data");
-              ESP_LOGI(TAG, "send data to ff:ff:ff:ff:ff:fe:" MACSTR ":00:00", MAC2STR(recv_cb->mac_addr));
+              ESP_LOGI(TAG, "send frame to %d ff:ff:ff:ff:ff:fe:" MACSTR ":00:00", cnt++, MAC2STR(recv_cb->mac_addr));
 
               /* Start sending unicast ESPNOW data. */
               memcpy(send_param->dest_mac, recv_cb->mac_addr, ESP_NOW_ETH_ALEN);
               espnow_data_prepare(send_param);
               if (esp_now_send(send_param->dest_mac, send_param->buffer, send_param->len) != ESP_OK) {
                 ESP_LOGE(TAG, "Send error");
-                espnow_deinit(send_param);
+                espnow_deinit();
                 vTaskDelete(NULL);
               }
               else {
@@ -517,95 +444,409 @@ espnow_task(void *pvParameter)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// espnow_init
+// vscp_espnow_send_cb
+//
+// ESPNOW sending or receiving callback function is called in WiFi task.
+// Users should not do lengthy operations from this task. Instead, post
+// necessary data to a queue and handle it from a lower priority task.
+//
+
+static void
+vscp_espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status)
+{
+  vscp_espnow_event_post_t evt;
+  vscp_espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
+
+  ESP_LOGI(TAG, "vscp_espnow_send_cb ");
+
+  if (mac_addr == NULL) {
+    ESP_LOGE(TAG, "Send cb arg error");
+    return;
+  }
+
+  evt.id = VSCP_ESPNOW_SEND_EVT;
+  memcpy(send_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
+  send_cb->status = status;
+  // Put status on event queue
+  if (xQueueSend(s_vscp_espnow_queue, &evt, ESPNOW_MAXDELAY) != pdTRUE) {
+    ESP_LOGW(TAG, "Add to event queue failed");
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_recv_cb
+//
+
+static void
+vscp_espnow_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
+{
+
+  vscp_espnow_event_post_t evt;
+  vscp_espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
+
+  if (mac_addr == NULL || data == NULL || len <= 0) {
+    ESP_LOGE(TAG, "Receive cb arg error");
+    return;
+  }
+
+  evt.id = VSCP_ESPNOW_RECV_EVT;
+  memcpy(recv_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
+  memcpy(recv_cb->buf, data, len);
+  recv_cb->len = len;
+  // Put message + status on event queue
+  if (xQueueSend(s_vscp_espnow_queue, &evt, ESPNOW_MAXDELAY) != pdTRUE) {
+    ESP_LOGW(TAG, "Send receive queue fail");
+  }
+}
+
+
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_heartbeat_prepare
+//
+// Prepare ESPNOW data to be sent.
+//
+
+// void vscp_espnow_heartbeat_prepare(vscp_espnow_send_param_t *send_param)
+//{
+//  vscp_espnow_data_t *buf = (vscp_espnow_data_t *)send_param->buffer;
+
+// assert(send_param->len >= sizeof(vscp_espnow_data_t));
+
+// buf->type = IS_BROADCAST_ADDR(send_param->dest_mac)
+//                 ? VSCP_ESPNOW_DATA_BROADCAST
+//                 : VSCP_ESPNOW_DATA_UNICAST;
+// buf->state = send_param->state;
+// buf->seq_num = s_vscp_espnow_seq[buf->type]++;
+// buf->crc = 0;
+// buf->magic = send_param->magic;
+// /* Fill all remaining bytes after the data with random values */
+// esp_fill_random(buf->payload, send_param->len - sizeof(vscp_espnow_data_t));
+// buf->crc = esp_crc16_le(UINT16_MAX, (uint8_t const *)buf, send_param->len);
+//}
+
+static int
+vscpEventToEspNowBuf(uint8_t *buf, uint8_t len, vscp_espnow_event_t *pvscpEspNowEvent)
+{
+  if (len < VSCP_ESPNOW_PACKET_MAX_SIZE) {
+    return -1;
+  }
+  // pvscpEspNowEvent->ttl = 7;
+  //  pvscpEspNowEvent->seq = seq++;
+  // pvscpEspNowEvent->magic = esp_random();
+  //  pvscpEspNowEvent.crc = 0;
+  //   https://grodansparadis.github.io/vscp-doc-spec/#/./class1.information?id=type9
+  pvscpEspNowEvent->head = 0;
+  // pvscpEspNowEvent->timestamp  = 0;
+  pvscpEspNowEvent->nickname   = 0;
+  pvscpEspNowEvent->vscp_class = VSCP_CLASS1_INFORMATION;
+  pvscpEspNowEvent->vscp_type  = VSCP_TYPE_INFORMATION_NODE_HEARTBEAT;
+  pvscpEspNowEvent->len        = 3;
+  pvscpEspNowEvent->data[0]    = 0;
+  pvscpEspNowEvent->data[1]    = 0xff; // All zones
+  pvscpEspNowEvent->data[2]    = 0xff; // All subzones
+
+  // seq
+  // buf[0] = (pvscpEspNowEvent->seq >> 8) & 0xff;
+  // buf[1] = pvscpEspNowEvent->seq & 0xff;
+  // magic
+  // buf[2] = (pvscpEspNowEvent->magic >> 24) & 0xff;
+  // buf[3] = (pvscpEspNowEvent->magic >> 16) & 0xff;
+  // buf[4] = (pvscpEspNowEvent->magic >> 8) & 0xff;
+  // buf[5] = pvscpEspNowEvent->magic & 0xff;
+  // ttl
+  // buf[6] = pvscpEspNowEvent->ttl;
+  // head
+  buf[7] = (pvscpEspNowEvent->head >> 8) & 0xff;
+  buf[8] = pvscpEspNowEvent->head & 0xff;
+  // timestamp
+  // buf[9]  = (pvscpEspNowEvent->timestamp >> 24) & 0xff;
+  // buf[10] = (pvscpEspNowEvent->timestamp >> 16) & 0xff;
+  // buf[11] = (pvscpEspNowEvent->timestamp >> 8) & 0xff;
+  // buf[12] = pvscpEspNowEvent->timestamp & 0xff;
+  // nickname
+  buf[13] = (pvscpEspNowEvent->nickname >> 8) & 0xff;
+  buf[14] = pvscpEspNowEvent->nickname & 0xff;
+  // vscp_class
+  buf[15] = pvscpEspNowEvent->vscp_class;
+  // vscp_type
+  buf[16] = pvscpEspNowEvent->vscp_type;
+  // Payload data
+  for (uint8_t i = 0; i < pvscpEspNowEvent->len; i++) {
+    buf[17 + i] = pvscpEspNowEvent->data[i];
+  }
+  // CRC
+  pvscpEspNowEvent->crc               = esp_crc16_le(UINT16_MAX, (uint8_t const *) buf, 17 + pvscpEspNowEvent->len);
+  buf[17 + pvscpEspNowEvent->len]     = (pvscpEspNowEvent->crc >> 8) & 0xff;
+  buf[17 + pvscpEspNowEvent->len + 1] = pvscpEspNowEvent->crc & 0xff;
+
+  return 0;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_heartbeat_task
+//
+
+static void
+vscp_espnow_heartbeat_task(void *pvParameter)
+{
+  ESP_LOGI(TAG, "Start sending VSCP heartbeats");
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_task
+//
+
+static void
+vscp_espnow_send_task(void *pvParameter)
+{
+  vscp_espnow_event_post_t evt;
+  // uint16_t seq      = 0;
+  // uint16_t recv_seq = 0;
+  //  int recv_magic = 0;
+  uint8_t dest_mac[ESP_NOW_ETH_ALEN]; // MAC address of destination device.
+  vscp_espnow_event_t vscpEspNowEvent;
+  uint8_t buf[VSCP_ESPNOW_PACKET_MAX_SIZE];
+  // int ret;
+  static int cnt = 0;
+
+  memcpy(dest_mac, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN);
+
+  vTaskDelay(5000 / portTICK_RATE_MS);
+  ESP_LOGI(TAG, "Start sending broadcast data");
+
+  vscpEventToEspNowBuf(buf, sizeof(buf), &vscpEspNowEvent);
+
+  ESP_LOGI(TAG, "Before broadcast send");
+
+  espnow_frame_head_t frame_head = {
+    .retransmit_count = 0,
+    .broadcast        = true,
+    .forward_ttl      = 7,
+  };
+
+  ESP_LOGI(TAG, "Before broadcast send 2");
+
+  espnow_send(ESPNOW_TYPE_DATA,
+              dest_mac,
+              buf,
+              VSCP_ESPNOW_PACKET_MIN_SIZE + vscpEspNowEvent.len,
+              &frame_head,
+              portMAX_DELAY);
+
+  ESP_LOGI(TAG, "First broadcast sent");
+
+  while (xQueueReceive(s_vscp_espnow_queue, &evt, portMAX_DELAY) == pdTRUE) {
+
+    switch (evt.id) {
+
+      case VSCP_ESPNOW_SEND_EVT: {
+
+        vscp_espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
+        // is_broadcast = IS_BROADCAST_ADDR(send_cb->mac_addr);
+
+        ESP_LOGD(TAG,
+                 "--> Send frame %d to " MACSTR ", status1: %d",
+                 cnt++,
+                 MAC2STR(send_cb->mac_addr),
+                 send_cb->status);
+
+        // if (is_broadcast && (send_param->broadcast == false)) {
+        //   break;
+        // }
+
+        // if (!is_broadcast) {
+        //   send_param->count--;
+        //   if (send_param->count == 0) {
+        //     ESP_LOGI(TAG, "Send done");
+        //     vscp_espnow_deinit(NULL);
+        //     vTaskDelete(NULL);
+        //   }
+        // }
+
+        /* Delay a while before sending the next data. */
+        // if (CONFIG_ESPNOW_SEND_DELAY > 0) {
+        // vTaskDelay(1000 / portTICK_RATE_MS);
+        //}
+
+        ESP_LOGI(TAG, "send frame %d to " MACSTR "", cnt++, MAC2STR(send_cb->mac_addr));
+
+        memcpy(dest_mac, send_cb->mac_addr, ESP_NOW_ETH_ALEN);
+        // scp_espnow_heart_beat_prepare(send_param);
+
+        // vscpEspNowEvent.ttl   = 7;
+        // vscpEspNowEvent.seq   = seq++;
+        // vscpEspNowEvent.magic = esp_random();
+        vscpEventToEspNowBuf(buf, sizeof(buf), &vscpEspNowEvent);
+
+        /* Send the next data after the previous data is sent. */
+        // if (esp_now_send(dest_mac, buf, VSCP_ESPNOW_PACKET_MAX_SIZE) != ESP_OK) {
+        //   ESP_LOGE(TAG, "Send error");
+        //   vscp_espnow_deinit(NULL);
+        //   vTaskDelete(NULL);
+        // }
+        espnow_frame_head_t frame_head = {
+          .retransmit_count = 0,
+          .broadcast        = true,
+          .forward_ttl      = 7,
+        };
+        vscpEspNowEvent.len = 0;
+        espnow_send(ESPNOW_TYPE_DATA,
+                    dest_mac,
+                    buf,
+                    VSCP_ESPNOW_PACKET_MIN_SIZE + vscpEspNowEvent.len,
+                    &frame_head,
+                    portMAX_DELAY);
+
+        break;
+      }
+      case VSCP_ESPNOW_RECV_EVT: {
+        break;
+      } // receive
+
+      default:
+        ESP_LOGE(TAG, "Callback type error: %d", evt.id);
+        break;
+    }
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_init
 //
 
 static esp_err_t
-espnow_init(void)
+vscp_espnow_init(void)
 {
-  espnow_send_param_t *send_param;
+  // vscp_espnow_send_param_t *send_param;
 
-  s_espnow_queue = xQueueCreate(ESPNOW_QUEUE_SIZE, sizeof(espnow_event_t));
-  if (s_espnow_queue == NULL) {
+  // Create the event queue
+  s_vscp_espnow_queue = xQueueCreate(ESPNOW_QUEUE_SIZE, sizeof(vscp_espnow_event_post_t));
+  if (s_vscp_espnow_queue == NULL) {
     ESP_LOGE(TAG, "Create mutex fail");
     return ESP_FAIL;
   }
 
-  /* Initialize ESPNOW and register sending and receiving callback function. */
-  ESP_ERROR_CHECK(esp_now_init());
-  ESP_ERROR_CHECK(esp_now_register_send_cb(espnow_send_cb));
-  ESP_ERROR_CHECK(esp_now_register_recv_cb(espnow_recv_cb));
-#if CONFIG_ESP_WIFI_STA_DISCONNECTED_PM_ENABLE
-  ESP_ERROR_CHECK(esp_now_set_wake_window(65535));
-#endif
-  /* Set primary master key. */
+  // g_send_lock = xSemaphoreCreateMutex();
+  // ESP_ERROR_RETURN(!g_send_lock, ESP_FAIL, "Create send semaphore mutex fail");
+  espnow_config_t espnow_config = ESPNOW_INIT_CONFIG_DEFAULT();
+  espnow_init(&espnow_config);
+
+  // Initialize ESPNOW and register sending and receiving callback function.
+  // ESP_ERROR_CHECK(esp_now_init());
+  ESP_ERROR_CHECK(esp_now_register_send_cb(vscp_espnow_send_cb));
+  ESP_ERROR_CHECK(esp_now_register_recv_cb(vscp_espnow_recv_cb));
+
+  // Set primary master key.
   ESP_ERROR_CHECK(esp_now_set_pmk((uint8_t *) CONFIG_ESPNOW_PMK));
 
-  /* Add broadcast peer information to peer list. */
+  // Add broadcast peer information to peer list.
   esp_now_peer_info_t *peer = malloc(sizeof(esp_now_peer_info_t));
-  if (peer == NULL) {
+  if (NULL == peer) {
     ESP_LOGE(TAG, "Malloc peer information fail");
-    vSemaphoreDelete(s_espnow_queue);
+    vSemaphoreDelete(s_vscp_espnow_queue);
     esp_now_deinit();
     return ESP_FAIL;
   }
-
-  // Get wifi channel
-  uint8_t primary_channel;
-  wifi_second_chan_t secondary_channel;
-  esp_wifi_get_channel(&primary_channel, &secondary_channel);
-
   memset(peer, 0, sizeof(esp_now_peer_info_t));
-  peer->channel = primary_channel; //CONFIG_ESPNOW_CHANNEL;
+  peer->channel = CONFIG_ESPNOW_CHANNEL;
   peer->ifidx   = ESPNOW_WIFI_IF;
   peer->encrypt = false;
-  memcpy(peer->peer_addr, s_broadcast_mac, ESP_NOW_ETH_ALEN);
-  ESP_ERROR_CHECK(esp_now_add_peer(peer));
+  memcpy(peer->peer_addr, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN);
+  // ESP_ERROR_CHECK(esp_now_add_peer(peer));
+  esp_now_add_peer(peer);
   free(peer);
 
-  /* Initialize sending parameters. */
-  send_param = malloc(sizeof(espnow_send_param_t));
-  if (send_param == NULL) {
+  // Initialize sending parameters.
+  /* send_param = malloc(sizeof(vscp_espnow_send_param_t));
+  if (NULL == send_param) {
     ESP_LOGE(TAG, "Malloc send parameter fail");
-    vSemaphoreDelete(s_espnow_queue);
+    vSemaphoreDelete(s_vscp_espnow_queue);
     esp_now_deinit();
     return ESP_FAIL;
-  }
-  memset(send_param, 0, sizeof(espnow_send_param_t));
-  send_param->unicast   = false;
+  } */
+
+  /* memset(send_param, 0, sizeof(vscp_espnow_send_param_t));
+  send_param->unicast = false;
   send_param->broadcast = true;
-  send_param->state     = 0;
-  send_param->magic     = esp_random();
-  send_param->count     = CONFIG_ESPNOW_SEND_COUNT;
-  send_param->delay     = CONFIG_ESPNOW_SEND_DELAY;
-  send_param->len       = CONFIG_ESPNOW_SEND_LEN;
-  send_param->buffer    = malloc(CONFIG_ESPNOW_SEND_LEN);
+  send_param->state = 0;
+  send_param->magic = esp_random();
+  send_param->count = CONFIG_ESPNOW_SEND_COUNT;
+  send_param->delay = CONFIG_ESPNOW_SEND_DELAY;
+  send_param->len = CONFIG_ESPNOW_SEND_LEN;
+  send_param->buffer = malloc(CONFIG_ESPNOW_SEND_LEN);
   if (send_param->buffer == NULL) {
     ESP_LOGE(TAG, "Malloc send buffer fail");
     free(send_param);
-    vSemaphoreDelete(s_espnow_queue);
+    vSemaphoreDelete(s_vscp_espnow_queue);
     esp_now_deinit();
     return ESP_FAIL;
   }
-  memcpy(send_param->dest_mac, s_broadcast_mac, ESP_NOW_ETH_ALEN);
-  espnow_data_prepare(send_param);
+  memcpy(send_param->dest_mac, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN);
+  vscp_espnow_heart_beat_prepare(send_param); */
 
-  xTaskCreate(espnow_task, "espnow_task", 2048, send_param, 4, NULL);
+  xTaskCreate(vscp_espnow_send_task, "vscp_espnow_send_task", 4096, NULL, 4, NULL);
+  // xTaskCreate(vscp_espnow_recv_task, "vscp_espnow_recv_task", 2048, NULL, 4, NULL);
 
   return ESP_OK;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// espnow_deinit
+// vscp_espnow_deinit
 //
 
 static void
-espnow_deinit(espnow_send_param_t *send_param)
+vscp_espnow_deinit(void *param)
 {
-  free(send_param->buffer);
-  free(send_param);
-  vSemaphoreDelete(s_espnow_queue);
+  // free(send_param->buffer);
+  // free(send_param);
+  vSemaphoreDelete(s_vscp_espnow_queue);
+
   esp_now_deinit();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// security
+//
+
+void
+security(void)
+{
+  uint32_t start_time1                  = xTaskGetTickCount();
+  espnow_sec_result_t espnow_sec_result = { 0 };
+  espnow_sec_responder_t *info_list     = NULL;
+  size_t num                            = 0;
+  espnow_sec_initiator_scan(&info_list, &num, pdMS_TO_TICKS(3000));
+  ESP_LOGW(TAG, "espnow wait security num: %d", num);
+
+  if (num == 0) {
+    ESP_FREE(info_list);
+    return;
+  }
+
+  espnow_addr_t *dest_addr_list = ESP_MALLOC(num * ESPNOW_ADDR_LEN);
+
+  for (size_t i = 0; i < num; i++) {
+    memcpy(dest_addr_list[i], info_list[i].mac, ESPNOW_ADDR_LEN);
+  }
+
+  ESP_FREE(info_list);
+  uint32_t start_time2 = xTaskGetTickCount();
+  esp_err_t ret        = espnow_sec_initiator_start(g_sec, pop_data, dest_addr_list, num, &espnow_sec_result);
+  ESP_ERROR_GOTO(ret != ESP_OK, EXIT, "<%s> espnow_sec_initator_start", esp_err_to_name(ret));
+
+  ESP_LOGI(TAG,
+           "App key is sent to the device to complete, Spend time: %dms, Scan time: %dms",
+           (xTaskGetTickCount() - start_time1) * portTICK_RATE_MS,
+           (start_time2 - start_time1) * portTICK_RATE_MS);
+  ESP_LOGI(TAG,
+           "Devices security completed, successed_num: %d, unfinished_num: %d",
+           espnow_sec_result.successed_num,
+           espnow_sec_result.unfinished_num);
+
+EXIT:
+  ESP_FREE(dest_addr_list);
+  espnow_sec_initator_result_free(&espnow_sec_result);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -644,7 +885,7 @@ get_device_guid(uint8_t *pguid)
     return false;
   }
 
-  rv = nvs_get_blob(nvsHandle, "guid", pguid, &length);
+  rv = nvs_get_blob(g_nvsHandle, "guid", pguid, &length);
   switch (rv) {
 
     case ESP_OK:
@@ -672,18 +913,18 @@ static void
 event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
 
-#ifdef CONFIG_WCANG_RESET_PROV_MGR_ON_FAILURE
+#ifdef CONFIG_RESET_PROV_MGR_ON_FAILURE
   static int retries;
 #endif
 
   if (event_base == WIFI_PROV_EVENT) {
 
     switch (event_id) {
-    
+
       case WIFI_PROV_START:
         ESP_LOGI(TAG, "Provisioning started");
         break;
-    
+
       case WIFI_PROV_CRED_RECV: {
         wifi_sta_config_t *wifi_sta_cfg = (wifi_sta_config_t *) event_data;
         ESP_LOGI(TAG,
@@ -693,7 +934,7 @@ event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *ev
                  (const char *) wifi_sta_cfg->password);
         break;
       }
-    
+
       case WIFI_PROV_CRED_FAIL: {
         wifi_prov_sta_fail_reason_t *reason = (wifi_prov_sta_fail_reason_t *) event_data;
         ESP_LOGE(TAG,
@@ -701,9 +942,9 @@ event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *ev
                  "\n\tPlease reset to factory and retry provisioning",
                  (*reason == WIFI_PROV_STA_AUTH_ERROR) ? "Wi-Fi station authentication failed"
                                                        : "Wi-Fi access-point not found");
-#ifdef CONFIG_WCANG_RESET_PROV_MGR_ON_FAILURE
+#ifdef CONFIG_RESET_PROV_MGR_ON_FAILURE
         retries++;
-        if (retries >= CONFIG_WCANG_PROV_MGR_MAX_RETRY_CNT) {
+        if (retries >= CONFIG_PROV_MGR_MAX_RETRY_CNT) {
           ESP_LOGI(TAG,
                    "Failed to connect with provisioned AP, reseting "
                    "provisioned credentials");
@@ -713,19 +954,19 @@ event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *ev
 #endif
         break;
       }
-    
+
       case WIFI_PROV_CRED_SUCCESS:
         ESP_LOGI(TAG, "Provisioning successful");
-#ifdef CONFIG_WCANG_RESET_PROV_MGR_ON_FAILURE
+#ifdef CONFIG_RESET_PROV_MGR_ON_FAILURE
         retries = 0;
 #endif
         break;
-    
+
       case WIFI_PROV_END:
         /* De-initialize manager once provisioning is finished */
         wifi_prov_mgr_deinit();
         break;
-    
+
       default:
         break;
     }
@@ -750,11 +991,19 @@ event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *ev
   }
 }
 
+static void
+wifi_init_sta(void)
+{
+  /* Start Wi-Fi in station mode */
+  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA)); // WIFI_MODE_APSTA
+  ESP_ERROR_CHECK(esp_wifi_start());
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // get_device_service_name
 //
 
-static void
+void
 get_device_service_name(char *service_name, size_t max)
 {
   uint8_t eth_mac[6];
@@ -801,7 +1050,7 @@ custom_prov_data_handler(uint32_t session_id,
 // wifi_prov_print_qr
 //
 
-static void
+void
 wifi_prov_print_qr(const char *name, const char *username, const char *pop, const char *transport)
 {
   if (!name || !transport) {
@@ -810,7 +1059,7 @@ wifi_prov_print_qr(const char *name, const char *username, const char *pop, cons
   }
   char payload[150] = { 0 };
   if (pop) {
-#if CONFIG_WCANG_PROV_SECURITY_VERSION_1
+#if CONFIG_PROV_SECURITY_VERSION_1
     snprintf(payload,
              sizeof(payload),
              "{\"ver\":\"%s\",\"name\":\"%s\""
@@ -819,7 +1068,7 @@ wifi_prov_print_qr(const char *name, const char *username, const char *pop, cons
              name,
              pop,
              transport);
-#elif CONFIG_WCANG_PROV_SECURITY_VERSION_2
+#elif CONFIG_PROV_SECURITY_VERSION_2
     snprintf(payload,
              sizeof(payload),
              "{\"ver\":\"%s\",\"name\":\"%s\""
@@ -840,7 +1089,7 @@ wifi_prov_print_qr(const char *name, const char *username, const char *pop, cons
              name,
              transport);
   }
-#ifdef CONFIG_WCANG_PROV_SHOW_QR
+#ifdef CONFIG_PROV_SHOW_QR
   ESP_LOGI(TAG, "Scan this QR code from the provisioning application for Provisioning.");
   esp_qrcode_config_t cfg = ESP_QRCODE_CONFIG_DEFAULT();
   esp_qrcode_generate(&cfg, payload);
@@ -850,6 +1099,24 @@ wifi_prov_print_qr(const char *name, const char *username, const char *pop, cons
            "browser.\n%s?data=%s",
            QRCODE_BASE_URL,
            payload);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// LED status task
+//
+
+void
+led_task(void *pvParameter)
+{
+  // GPIO_NUM_16 is G16 on board
+  gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
+  printf("Blinking LED on GPIO 16\n");
+  int cnt = 0;
+  while (1) {
+    gpio_set_level(GPIO_NUM_2, cnt % 2);
+    cnt++;
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -910,7 +1177,9 @@ app_main(void)
   gpio_set_level(CONNECTED_LED_GPIO_NUM, 1);
   gpio_set_level(ACTIVE_LED_GPIO_NUM, 1);
 
-  // QueueHandle_t test = xQueueCreate(10, sizeof( twai_message_t) );
+  // Create message queues  QueueHandle_t tx_msg_queue
+  g_tx_msg_queue = xQueueCreate(ESPNOW_SIZE_TX_BUF, sizeof(vscp_espnow_event_t)); /*< Outgoing esp-now messages */
+  g_rx_msg_queue = xQueueCreate(ESPNOW_SIZE_TX_BUF, sizeof(vscp_espnow_event_t)); /*< Incoming esp-now messages */
 
   // **************************************************************************
   //                        NVS - Persistent storage
@@ -919,7 +1188,7 @@ app_main(void)
   // Init persistent storage
   ESP_LOGE(TAG, "Persistent storage ... ");
 
-  rv = nvs_open("config", NVS_READWRITE, &nvsHandle);
+  rv = nvs_open("config", NVS_READWRITE, &g_nvsHandle);
   if (rv != ESP_OK) {
     ESP_LOGE(TAG, "Error (%s) opening NVS handle!\n", esp_err_to_name(rv));
   }
@@ -929,7 +1198,7 @@ app_main(void)
     ESP_LOGI(TAG, "Reading restart counter from NVS ... ");
     int32_t restart_counter = 0; // value will default to 0, if not set yet in NVS
 
-    rv = nvs_get_i32(nvsHandle, "restart_counter", &restart_counter);
+    rv = nvs_get_i32(g_nvsHandle, "restart_counter", &restart_counter);
     switch (rv) {
 
       case ESP_OK:
@@ -947,7 +1216,7 @@ app_main(void)
     // Write
     ESP_LOGI(TAG, "Updating restart counter in NVS ... ");
     restart_counter++;
-    rv = nvs_set_i32(nvsHandle, "restart_counter", restart_counter);
+    rv = nvs_set_i32(g_nvsHandle, "restart_counter", restart_counter);
     if (rv != ESP_OK) {
       ESP_LOGI(TAG, "Failed!\n");
     }
@@ -960,7 +1229,7 @@ app_main(void)
     // are written to flash storage. Implementations may write to storage at
     // other times, but this is not guaranteed.
     ESP_LOGI(TAG, "Committing updates in NVS ... ");
-    rv = nvs_commit(nvsHandle);
+    rv = nvs_commit(g_nvsHandle);
     if (rv != ESP_OK) {
       ESP_LOGI(TAG, "Failed!\n");
     }
@@ -971,13 +1240,13 @@ app_main(void)
     // TODO remove !!!!
     char username[32];
     size_t length = sizeof(username);
-    rv            = nvs_get_str(nvsHandle, "username", username, &length);
+    rv            = nvs_get_str(g_nvsHandle, "username", username, &length);
     ESP_LOGI(TAG, "Username_: %s", username);
     length = sizeof(username);
-    rv     = nvs_get_str(nvsHandle, "password", username, &length);
+    rv     = nvs_get_str(g_nvsHandle, "password", username, &length);
     ESP_LOGI(TAG, "Password: %s", username);
     length = 16;
-    rv     = nvs_get_blob(nvsHandle, "guid", device_guid, &length);
+    rv     = nvs_get_blob(g_nvsHandle, "guid", g_device_guid, &length);
     // ESP_LOGI(TAG,
     //          "GUID:
     //          %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
@@ -998,53 +1267,49 @@ app_main(void)
     //          device_guid[14],
     //          device_guid[15]);
     // If GUID is all zero construct GUID
-    if (!(device_guid[0] | device_guid[1] | device_guid[2] | device_guid[3] | device_guid[4] | device_guid[5] |
-          device_guid[6] | device_guid[7] | device_guid[8] | device_guid[9] | device_guid[10] | device_guid[11] |
-          device_guid[12] | device_guid[13] | device_guid[14] | device_guid[15])) {
-      device_guid[0] = 0xff;
-      device_guid[1] = 0xff;
-      device_guid[2] = 0xff;
-      device_guid[3] = 0xff;
-      device_guid[4] = 0xff;
-      device_guid[5] = 0xff;
-      device_guid[6] = 0xff;
-      device_guid[7] = 0xfe;
-      rv             = esp_efuse_mac_get_default(device_guid + 8);
+    if (!(g_device_guid[0] | g_device_guid[1] | g_device_guid[2] | g_device_guid[3] | g_device_guid[4] |
+          g_device_guid[5] | g_device_guid[6] | g_device_guid[7] | g_device_guid[8] | g_device_guid[9] |
+          g_device_guid[10] | g_device_guid[11] | g_device_guid[12] | g_device_guid[13] | g_device_guid[14] |
+          g_device_guid[15])) {
+      g_device_guid[0] = 0xff;
+      g_device_guid[1] = 0xff;
+      g_device_guid[2] = 0xff;
+      g_device_guid[3] = 0xff;
+      g_device_guid[4] = 0xff;
+      g_device_guid[5] = 0xff;
+      g_device_guid[6] = 0xff;
+      g_device_guid[7] = 0xfe;
+      rv               = esp_efuse_mac_get_default(g_device_guid + 8);
       // ESP_LOGI(TAG,
       //          "Constructed GUID:
       //          %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
-      //          device_guid[0],
-      //          device_guid[1],
-      //          device_guid[2],
-      //          device_guid[3],
-      //          device_guid[4],
-      //          device_guid[5],
-      //          device_guid[6],
-      //          device_guid[7],
-      //          device_guid[8],
-      //          device_guid[9],
-      //          device_guid[10],
-      //          device_guid[11],
-      //          device_guid[12],
-      //          device_guid[13],
-      //          device_guid[14],
-      //          device_guid[15]);
+      //          g_device_guid[0],
+      //          g_device_guid[1],
+      //          g_device_guid[2],
+      //          g_device_guid[3],
+      //          g_device_guid[4],
+      //          g_device_guid[5],
+      //          g_device_guid[6],
+      //          g_device_guid[7],
+      //          g_device_guid[8],
+      //          g_device_guid[9],
+      //          g_device_guid[10],
+      //          g_device_guid[11],
+      //          g_device_guid[12],
+      //          g_device_guid[13],
+      //          g_device_guid[14],
+      //          g_device_guid[15]);
     }
   }
 
-  ctrl_task_sem = xSemaphoreCreateBinary();
+  g_ctrl_task_sem = xSemaphoreCreateBinary();
 
   // Register our event handler for Wi-Fi, IP and Provisioning related events
   ESP_ERROR_CHECK(esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
   ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
   ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
 
-  // Initialize Wi-Fi including netif with default config
-  esp_netif_create_default_wifi_sta();
-
-#ifdef CONFIG_WCANG_PROV_TRANSPORT_SOFTAP
-  esp_netif_create_default_wifi_ap();
-#endif // CONFIG_WCANG_PROV_TRANSPORT_SOFTAP
+  ESP_LOGI(TAG, "default wifi sta");
 
   // ESP_ERROR_CHECK(esp_netif_init());
   // ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -1053,212 +1318,18 @@ app_main(void)
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&cfg));
   ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+  esp_netif_create_default_wifi_sta();
 
-  // --------------------------------------------------------
-  //                      Provisioning
-  // --------------------------------------------------------
+  ESP_LOGI(TAG, "wifi initializated");
 
-  // Configuration for the provisioning manager
-  wifi_prov_mgr_config_t config = {
-  // What is the Provisioning Scheme that we want ?
-  // wifi_prov_scheme_softap or wifi_prov_scheme_ble
-#ifdef CONFIG_WCANG_PROV_TRANSPORT_BLE
-    .scheme = wifi_prov_scheme_ble,
-#endif // CONFIG_WCANG_PROV_TRANSPORT_BLE
-#ifdef CONFIG_WCANG_PROV_TRANSPORT_SOFTAP
-    .scheme = wifi_prov_scheme_softap,
-#endif // CONFIG_WCANG_PROV_TRANSPORT_SOFTAP
+  // Do wifi provisioning if needed
 
-  /*
-   * Any default scheme specific event handler that you would
-   * like to choose. Since our example application requires
-   * neither BT nor BLE, we can choose to release the associated
-   * memory once provisioning is complete, or not needed
-   * (in case when device is already provisioned). Choosing
-   * appropriate scheme specific event handler allows the manager
-   * to take care of this automatically. This can be set to
-   * WIFI_PROV_EVENT_HANDLER_NONE when using wifi_prov_scheme_softap
-   */
-#ifdef CONFIG_WCANG_PROV_TRANSPORT_BLE
-    .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM
-#endif /* CONFIG_WCANG_PROV_TRANSPORT_BLE */
-#ifdef CONFIG_WCANG_PROV_TRANSPORT_SOFTAP
-    .scheme_event_handler = WIFI_PROV_EVENT_HANDLER_NONE
-#endif /* CONFIG_WCANG_PROV_TRANSPORT_SOFTAP */
-  };
+#ifdef CONFIG_PROV_TRANSPORT_SOFTAP
+  esp_netif_create_default_wifi_ap();
+#endif // CONFIG_PROV_TRANSPORT_SOFTAP
 
-  /*
-   * Initialize provisioning manager with the
-   * configuration parameters set above
-   */
-  ESP_ERROR_CHECK(wifi_prov_mgr_init(config));
+  if (!wifi_provisioning()) {
 
-  bool provisioned = false;
-#ifdef CONFIG_WCANG_RESET_PROVISIONED
-  wifi_prov_mgr_reset_provisioning();
-#else
-  /* Let's find out if the device is provisioned */
-  ESP_ERROR_CHECK(wifi_prov_mgr_is_provisioned(&provisioned));
-
-#endif
-
-  /* If device is not yet provisioned start provisioning service */
-  if (!provisioned) {
-
-    ESP_LOGI(TAG, "Starting provisioning");
-
-    /*
-     * What is the Device Service Name that we want
-     *
-     * This translates to :
-     *     - Wi-Fi SSID when scheme is wifi_prov_scheme_softap
-     *     - device name when scheme is wifi_prov_scheme_ble
-     */
-    char service_name[12];
-    get_device_service_name(service_name, sizeof(service_name));
-
-#ifdef CONFIG_WCANG_PROV_SECURITY_VERSION_1
-    /*
-     * What is the security level that we want (0, 1, 2):
-     *
-     *   - WIFI_PROV_SECURITY_0 is simply plain text communication.
-     *   - WIFI_PROV_SECURITY_1 is secure communication which consists of secure
-     * handshake using X25519 key exchange and proof of possession (pop) and
-     * AES-CTR for encryption/decryption of messages.
-     *   - WIFI_PROV_SECURITY_2 SRP6a based authentication and key exchange
-     *      + AES-GCM encryption/decryption of messages
-     */
-    wifi_prov_security_t security = WIFI_PROV_SECURITY_1;
-
-    /*
-     * Do we want a proof-of-possession (ignored if Security 0 is selected):
-     *   - this should be a string with length > 0
-     *   - NULL if not used
-     */
-    const char *pop = "VSCP-Dropplet-Alpha";
-    /*
-     * If the pop is allocated dynamically, then it should be valid till
-     * the provisioning process is running.
-     * it can be only freed when the WIFI_PROV_END event is triggered
-     */
-
-    /*
-     * This is the structure for passing security parameters
-     * for the protocomm security 1.
-     * This does not need not be static i.e. could be dynamically allocated
-     */
-    wifi_prov_security1_params_t *sec_params = pop;
-
-    const char *username = NULL;
-
-#elif CONFIG_WCANG_PROV_SECURITY_VERSION_2
-    wifi_prov_security_t security = WIFI_PROV_SECURITY_2;
-    // The username must be the same one, which has been used in the generation
-    // of salt and verifier
-
-#if CONFIG_WCANG_PROV_SEC2_DEV_MODE
-    /*
-     * This pop field represents the password that will be used to generate salt
-     * and verifier. The field is present here in order to generate the QR code
-     * containing password. In production this password field shall not be
-     * stored on the device
-     */
-    const char *username = WCANG_PROV_SEC2_USERNAME;
-    const char *pop = WCANG_PROV_SEC2_PWD;
-#elif CONFIG_WCANG_PROV_SEC2_PROD_MODE
-    /*
-     * The username and password shall not be embedded in the firmware,
-     * they should be provided to the user by other means.
-     * e.g. QR code sticker
-     */
-    const char *username = NULL;
-    const char *pop      = NULL;
-#endif
-    /*
-     * This is the structure for passing security parameters
-     * for the protocomm security 2.
-     * This does not need not be static i.e. could be dynamically allocated
-     */
-    wifi_prov_security2_params_t sec2_params = {};
-
-    ESP_ERROR_CHECK(wcang_get_sec2_salt(&sec2_params.salt, &sec2_params.salt_len));
-    ESP_ERROR_CHECK(wcang_get_sec2_verifier(&sec2_params.verifier, &sec2_params.verifier_len));
-
-    wifi_prov_security2_params_t *sec_params = &sec2_params;
-#endif
-
-    /*
-     * What is the service key (could be NULL)
-     * This translates to :
-     *     - Wi-Fi password when scheme is wifi_prov_scheme_softap
-     *          (Minimum expected length: 8, maximum 64 for WPA2-PSK)
-     *     - simply ignored when scheme is wifi_prov_scheme_ble
-     */
-    const char *service_key = NULL;
-
-#ifdef CONFIG_WCANG_PROV_TRANSPORT_BLE
-    /*
-     * This step is only useful when scheme is wifi_prov_scheme_ble. This will
-     * set a custom 128 bit UUID which will be included in the BLE advertisement
-     * and will correspond to the primary GATT service that provides
-     * provisioning endpoints as GATT characteristics. Each GATT characteristic
-     * will be formed using the primary service UUID as base, with different
-     * auto assigned 12th and 13th bytes (assume counting starts from 0th byte).
-     * The client side applications must identify the endpoints by reading the
-     * User Characteristic Description descriptor (0x2901) for each
-     * characteristic, which contains the endpoint name of the characteristic
-     */
-    uint8_t custom_service_uuid[] = {
-      /*
-       * LSB <---------------------------------------
-       * ---------------------------------------> MSB
-       */
-      0xb4, 0xdf, 0x5a, 0x1c, 0x3f, 0x6b, 0xf4, 0xbf, 0xea, 0x4a, 0x82, 0x03, 0x04, 0x90, 0x1a, 0x02,
-    };
-
-    /*
-     * If your build fails with linker errors at this point, then you may have
-     * forgotten to enable the BT stack or BTDM BLE settings in the SDK (e.g.
-     * see the sdkconfig.defaults in the example project)
-     */
-    wifi_prov_scheme_ble_set_service_uuid(custom_service_uuid);
-#endif /* CONFIG_WCANG_PROV_TRANSPORT_BLE */
-
-    /*
-     * An optional endpoint that applications can create if they expect to
-     * get some additional custom data during provisioning workflow.
-     * The endpoint name can be anything of your choice.
-     * This call must be made before starting the provisioning.
-     */
-    wifi_prov_mgr_endpoint_create("VSCP-WCANG");
-
-    /* Start provisioning service */
-    ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(security, (const void *) sec_params, service_name, service_key));
-
-    /*
-     * The handler for the optional endpoint created above.
-     * This call must be made after starting the provisioning, and only if the
-     * endpoint has already been created above.
-     */
-    wifi_prov_mgr_endpoint_register("VSCP-WCANG", custom_prov_data_handler, NULL);
-
-    /*
-     * Uncomment the following to wait for the provisioning to finish and then
-     * release the resources of the manager. Since in this case
-     * de-initialization is triggered by the default event loop handler, we
-     * don't need to call the following
-     */
-    // wifi_prov_mgr_wait();
-    // wifi_prov_mgr_deinit();
-
-    /* Print QR code for provisioning */
-#ifdef CONFIG_WCANG_PROV_TRANSPORT_BLE
-    wifi_prov_print_qr(service_name, username, pop, PROV_TRANSPORT_BLE);
-#else  /* CONFIG_WCANG_PROV_TRANSPORT_SOFTAP */
-    wifi_prov_print_qr(service_name, username, pop, PROV_TRANSPORT_SOFTAP);
-#endif /* CONFIG_WCANG_PROV_TRANSPORT_BLE */
-  }
-  else {
     ESP_LOGI(TAG, "Already provisioned, starting Wi-Fi STA");
 
     /*
@@ -1267,20 +1338,28 @@ app_main(void)
      */
     wifi_prov_mgr_deinit();
 
-    /* Start Wi-Fi station */
-    //wifi_init_sta();
-    // esp_wifi_deinit();
-    wifi_init();
+    ESP_LOGI(TAG, "wifi_prov_mgr_deinit");
+
+    // vscp_wifi_init();
+    wifi_init_sta();
+    ESP_LOGI(TAG, "wifi init");
   }
 
   /* Wait for Wi-Fi connection */
   xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, false, true, portMAX_DELAY);
 
-  // wifi_init();
-  espnow_init();
+  // Start LED controlling tast
+  xTaskCreate(&led_task, "led_task", 1024, NULL, 5, NULL);
 
-  // First start of web server
-  int server = start_webserver();
+  // espnow_config_t espnow_config = ESPNOW_INIT_CONFIG_DEFAULT();
+  // espnow_init(&espnow_config);
+  vscp_espnow_init();
+
+  espnow_config_t espnow_config = ESPNOW_INIT_CONFIG_DEFAULT();
+  espnow_init(&espnow_config);
+
+  // Start web server
+  httpd_handle_t server = start_webserver();
 
   ESP_LOGI(TAG, "Going to work now!");
 
@@ -1297,5 +1376,5 @@ app_main(void)
   // Clean up
 
   // Close
-  nvs_close(nvsHandle);
+  nvs_close(g_nvsHandle);
 }
