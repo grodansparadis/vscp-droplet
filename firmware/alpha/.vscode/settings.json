@@ -6,6 +6,9 @@
     "*.ipp": "c",
     "esp_crc.h": "c",
     "esp_now.h": "c",
-    "esp_task_wdt.h": "c"
+    "esp_task_wdt.h": "c",
+    "vscp-firmware-level2.h": "c",
+    "tcpsrv.h": "c",
+    "vscp-firmware-helper.h": "c"
   }
 }

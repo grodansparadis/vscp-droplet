@@ -59,6 +59,144 @@
 
 static const char *TAG = "vscp_espnow_alpha";
 
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_build_guid_from_mac
+//
+
+int
+vscp_espnow_build_guid_from_mac(uint8_t *pguid, const uint8_t *pmac, uint16_t nickname)
+{
+  uint8_t prebytes[8] = {0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xfe};
+
+  // Need a GUID pointer
+  if (NULL == pguid) {
+    ESP_LOGE(TAG, "Pointer to GUID is NULL");
+    return VSCP_ERROR_INVALID_POINTER;
+  } 
+
+  // Need a mac pointer
+  if (NULL == pmac) {
+    ESP_LOGE(TAG, "Pointer to mac address is NULL");
+    return VSCP_ERROR_INVALID_POINTER;
+  } 
+
+  memcpy( pguid, prebytes, 8);
+  memcpy( pguid+8, pmac, 6);
+  pguid[14] = (nickname << 8) & 0xff;
+  pguid[15] =  nickname & 0xff;
+
+  return VSCP_ERROR_SUCCESS;
+}
+
+
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_build_heartbeat
+//
+
+int
+vscp_espnow_build_heartbeat(uint8_t *buf, uint8_t len, const uint8_t *pguid)
+{
+  // Need a buffer
+  if (NULL == buf) {
+    ESP_LOGE(TAG, "Pointer to buffer is NULL");
+    return VSCP_ERROR_INVALID_POINTER;
+  }
+
+  // Must have room for frame
+  if (len < (VSCP_ESPNOW_PACKET_MIN_SIZE + 3)) {
+    ESP_LOGE(TAG, "Size of byffer is to small to fit event, len:%d", len);
+    return VSCP_ERROR_PARAMETER;
+  }
+
+  memset(buf, 0, len);
+
+  // Construct VSCP heart beat event
+
+  // Packet id VSCP
+  buf[0] = (VSCP_DEFAULT_TCP_PORT >> 8) & 0xff;
+  buf[1] = VSCP_DEFAULT_TCP_PORT & 0xff;
+
+  // Head
+  buf[2] = 0;
+  buf[3] = 0;
+
+  // Nickname
+  if (NULL != pguid) {
+    buf[4] = pguid[14]; // (g_node_nickname >> 8) & 0xff;
+    buf[5] = pguid[15]; // g_node_nickname & 0xff;
+  }
+
+  // VSCP Class
+  buf[6] = (VSCP_CLASS1_INFORMATION >> 8) & 0xff;
+  buf[7] = VSCP_CLASS1_INFORMATION & 0xff;
+
+  // VSCP Type
+  buf[8] = (VSCP_TYPE_INFORMATION_NODE_HEARTBEAT >> 8) & 0xff;
+  buf[9] = VSCP_TYPE_INFORMATION_NODE_HEARTBEAT & 0xff;
+
+  // Data
+  buf[10] = 0;    // User specific
+  buf[11] = 0xff; // All zones
+  buf[12] = 0xff; // All subzones
+
+  return VSCP_ERROR_SUCCESS;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_build_l2_heartbeat
+//
+
+int
+vscp_espnow_build_l2_heartbeat(uint8_t *buf, uint8_t len, const uint8_t *pguid, const char *name)
+{
+  // Need a buffer
+  if (NULL == buf) {
+    ESP_LOGE(TAG, "Pointer to buffer is NULL");
+    return VSCP_ERROR_INVALID_POINTER;
+  }
+
+  // Must have room for frame
+  if (len < (VSCP_ESPNOW_PACKET_MIN_SIZE + 3)) {
+    ESP_LOGE(TAG, "Size of byffer is to small to fit event, len:%d", len);
+    return VSCP_ERROR_PARAMETER;
+  }
+
+  memset(buf, 0, len);
+
+  // Construct VSCP heart beat event
+
+  // Packet id VSCP
+  buf[0] = (VSCP_DEFAULT_TCP_PORT >> 8) & 0xff;
+  buf[1] = VSCP_DEFAULT_TCP_PORT & 0xff;
+
+  // Head
+  buf[2] = 0;
+  buf[3] = 0;
+
+  // Nickname
+  if (NULL != pguid) {
+    buf[4] = pguid[14]; // (g_node_nickname >> 8) & 0xff;
+    buf[5] = pguid[15]; // g_node_nickname & 0xff;
+  }
+
+  // VSCP Class
+  buf[6] = (VSCP_CLASS1_INFORMATION >> 8) & 0xff;
+  buf[7] = VSCP_CLASS1_INFORMATION & 0xff;
+
+  // VSCP Type
+  buf[8] = (VSCP_TYPE_INFORMATION_NODE_HEARTBEAT >> 8) & 0xff;
+  buf[9] = VSCP_TYPE_INFORMATION_NODE_HEARTBEAT & 0xff;
+
+  // Data
+  buf[10] = 0;    // User specific
+  buf[11] = 0xff; // All zones
+  buf[12] = 0xff; // All subzones
+
+  return VSCP_ERROR_SUCCESS;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // vscp_espnow_exToFrame
 //
@@ -66,53 +204,49 @@ static const char *TAG = "vscp_espnow_alpha";
 int
 vscp_espnow_exToFrame(uint8_t *buf, uint8_t len, const vscpEventEx *pex)
 {
-  uint16_t crc = 0;
-
-  if (len < VSCP_ESPNOW_PACKET_MIN_SIZE) {
-    ESP_LOGE(TAG, "event does not fit in buf, len:%d", len);
-    return VSCP_ERROR_INVALID_SYNTAX;
+  // Need a buffer
+  if (NULL == buf) {
+    ESP_LOGE(TAG, "Pointer to buffer is NULL");
+    return VSCP_ERROR_INVALID_POINTER;
   }
 
-  if (len < (VSCP_ESPNOW_PACKET_MIN_SIZE + pex->sizeData + 2 /*crc*/)) {
-    ESP_LOGE(TAG, "event + data does not fit in buf, len:%d", len);
-    return VSCP_ERROR_BUFFER_TO_SMALL;
+  // Need event
+  if (NULL == pex) {
+    ESP_LOGE(TAG, "Pointer to event is NULL");
+    return VSCP_ERROR_INVALID_POINTER;
   }
 
-  if (pex->sizeData > VSCP_ESPNOW_MAX_DATA) {
-    ESP_LOGE(TAG, "Size of VSCP event data os to large, len:%d", pex->sizeData);
-    return VSCP_ERROR_INVALID_SYNTAX;
+  // Must have room for frame
+  if (len < (VSCP_ESPNOW_PACKET_MIN_SIZE + pex->sizeData)) {
+    ESP_LOGE(TAG, "Size of buffer is to small to fit event, len:%d", len);
+    return VSCP_ERROR_PARAMETER;
   }
+
+  memset(buf, 0, len);
+
+  // Packet id VSCP
+  buf[0] = (VSCP_DEFAULT_TCP_PORT >> 8) & 0xff;
+  buf[1] = VSCP_DEFAULT_TCP_PORT & 0xff;
 
   // head
-  buf[0] = (pex->head >> 8) & 0xff;
-  buf[1] = pex->head & 0xff;
+  buf[2] = (pex->head >> 8) & 0xff;
+  buf[3] = pex->head & 0xff;
   
-  // timestamp
-  buf[2] = (pex->timestamp >> 24) & 0xff;
-  buf[3] = (pex->timestamp >> 16) & 0xff;
-  buf[4] = (pex->timestamp >> 8) & 0xff;
-  buf[5] = pex->timestamp & 0xff;
-
   // nickname   
-  buf[6] = pex->GUID[14];
-  buf[7] = pex->GUID[15];
+  buf[4] = pex->GUID[14];
+  buf[5] = pex->GUID[15];
 
   // vscp-class 
-  buf[8] = (pex->vscp_class >> 8) & 0xff;
-  buf[9] = pex->vscp_class & 0xff;
+  buf[6] = (pex->vscp_class >> 8) & 0xff;
+  buf[7] = pex->vscp_class & 0xff;
 
   // vscp-type
-  buf[10] = (pex->vscp_type >> 8) & 0xff;
-  buf[11] = pex->vscp_type & 0xff;
+  buf[8] = (pex->vscp_type >> 8) & 0xff;
+  buf[9] = pex->vscp_type & 0xff;
 
   // data    
-  memcpy((buf + 12), pex->data, pex->sizeData);
+  memcpy((buf + 10), pex->data, pex->sizeData);
   
-  // crc        - 
-  crc = esp_crc16_le(UINT16_MAX, (uint8_t const *)buf, VSCP_ESPNOW_PACKET_MIN_SIZE - 2 + pex->sizeData);
-  buf[VSCP_ESPNOW_PACKET_MIN_SIZE - 2] = (crc >> 8) & 0xff;
-  buf[VSCP_ESPNOW_PACKET_MIN_SIZE + 1 - 2] = crc & 0xff;
-
   return VSCP_ERROR_SUCCESS;
 }
 
@@ -120,26 +254,52 @@ vscp_espnow_exToFrame(uint8_t *buf, uint8_t len, const vscpEventEx *pex)
 // vscp_espnow_frameToEx
 //
 
-int vscp_espnow_frameToEx(vscpEventEx *pex, const uint8_t *buf, uint8_t len) 
+int vscp_espnow_frameToEx(vscpEventEx *pex, const uint8_t *buf, uint8_t len, uint32_t timestamp) 
 {
-  uint16_t crc = 0, crc_cal = 0;
+  // Need event
+  if (NULL == pex) {
+    ESP_LOGE(TAG, "Pointer to event is NULL");
+    return VSCP_ERROR_INVALID_POINTER;
+  }
 
+  // Must at least have min size
   if (len < VSCP_ESPNOW_PACKET_MIN_SIZE) {
-    ESP_LOGE(TAG, "Receive espnow data is too short, len:%d", len);
+    ESP_LOGE(TAG, "esp-now data is too short, len:%d", len);
     return VSCP_ERROR_MTU;
   }
 
-  if (len > VSCP_ESPNOW_PACKET_MAX_SIZE) {
-    ESP_LOGI(TAG, "Receive espnow data is too long (will try anyway), len:%d", len);
+  // First two bytes of buffer must be VSCP magic bytes, if not
+  // this is not a VSCP frame
+  if (!(buf[0] == ((VSCP_DEFAULT_TCP_PORT >> 8) & 0xff)) || !(buf[1] == (VSCP_DEFAULT_TCP_PORT & 0xff))) {
+    ESP_LOGE(TAG, "esp-now data is too short, len:%d", len);
+    return VSCP_ERROR_MTU;
   }
 
-  // crc = buf->crc;
-  // buf->crc = 0;
-  crc_cal = esp_crc16_le(UINT16_MAX, (uint8_t const *) buf, len);
+  memset(pex, 0, sizeof(vscpEventEx));
 
-  if (crc_cal == crc) {
-    return VSCP_ERROR_SUCCESS;
+  // Set VSCP size
+  pex->sizeData = len - VSCP_ESPNOW_PACKET_MIN_SIZE;
+
+  // Copy in VSCP data
+  memcpy(pex->data, buf+VSCP_ESPNOW_PACKET_MIN_SIZE, pex->sizeData);
+
+  // Set timestamp if not set
+  if (!timestamp) {
+    pex->timestamp =  esp_timer_get_time();
   }
+
+  // Head
+  pex->head = (buf[2] << 8) + buf[3];
+
+  // Nickname
+  pex->GUID[14] = buf[4];
+  pex->GUID[15] = buf[5];
+
+  // VSCP class
+  pex->vscp_class = (buf[6] << 8) + buf[7];
+
+  // VSCP type
+  pex->vscp_type = (buf[8] << 8) + buf[9];
 
   return VSCP_ERROR_SUCCESS;
 }

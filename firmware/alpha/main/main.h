@@ -32,7 +32,10 @@
 #include <freertos/task.h>
 #include <freertos/queue.h>
 
+#include "esp_now.h"
+
 #include <vscp.h>
+#include <vscp_espnow.h>
 
 #define CONNECTED_LED_GPIO_NUM		2
 #define ACTIVE_LED_GPIO_NUM			  3
@@ -146,7 +149,7 @@ typedef enum {
   ESPNOW_RECV_CB,
 } espnow_event_id_t;
 
-// Send callback statructure
+// Send callback structure
 typedef struct {
   uint8_t mac_addr[ESP_NOW_ETH_ALEN];
   esp_now_send_status_t status;

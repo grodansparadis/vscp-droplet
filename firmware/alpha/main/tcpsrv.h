@@ -30,6 +30,9 @@
 #ifndef __TCPSRV__
 #define __TCPSRV__
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+
 #include <vscp.h>
 #include <vscp-fifo.h>
 #include <vscp-firmware-helper.h>
@@ -62,7 +65,7 @@
   Socket context 
   This is the context for each open socket/channel.
 */
-typedef struct _ctx {
+typedef struct _vscpctx {
   int id;
   int sock;                                     // Socket
   size_t size;                                  // Number of characters in buffer
@@ -77,7 +80,7 @@ typedef struct _ctx {
   VSCPStatistics statistics;                    // VSCP Statistics
   VSCPStatus status;                            // VSCP status
   uint32_t last_rcvloop_time;                   // Time of last received event
-} ctx_t;
+} vscpctx_t;
 
 #define MSG_MAX_CLIENTS "Max number of clients reached. Disconnecting.\r\n"
 
@@ -87,7 +90,7 @@ typedef struct _ctx {
  * @param pctx Pointer to context
  */
 void
-setContextDefaults(ctx_t *pctx);
+setContextDefaults(vscpctx_t *pctx);
 
 /*!
   VSCP tcp/ip link protocol task

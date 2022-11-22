@@ -42,19 +42,17 @@
 #include <driver/gpio.h>
 
 #include <esp_event.h>
-
 #include <esp_task_wdt.h>
-
 #include "esp_crc.h"
 #include "esp_now.h"
 #include <esp_http_server.h>
 #include <esp_log.h>
 #include <esp_mac.h>
+#include <esp_task_wdt.h>
 #include <esp_timer.h>
 #include <esp_tls_crypto.h>
 #include <esp_wifi.h>
 #include <nvs_flash.h>
-#include <esp_task_wdt.h>
 
 #include <esp_storage.h>
 #include <esp_utils.h>
@@ -79,6 +77,7 @@
 #include <vscp_class.h>
 #include <vscp_type.h>
 
+#include "tcpsrv.h"
 #include "vscp_espnow.h"
 
 #include "main.h"
@@ -90,16 +89,24 @@ static const char *TAG = "espnow_alpha";
 // Handle for nvs storage
 nvs_handle_t g_nvsHandle;
 
+// Transports
+transport_t g_tr_tcpsrv[MAX_TCP_CONNECTIONS] = {};
+transport_t g_tr_mqtt      = {}; // MQTT
+
+///////////////////////////////////////////////////////////
+//                      V S C P
+///////////////////////////////////////////////////////////
+
 // GUID for unit
-uint8_t g_device_guid[16];
+uint8_t g_node_guid[16]; // Ful GUID for node
+
 
 // ESP-NOW
-
 SemaphoreHandle_t g_ctrl_task_sem;
 
 // Message queues for espnow messages
-QueueHandle_t g_tx_msg_queue;
-QueueHandle_t g_rx_msg_queue;
+// QueueHandle_t g_tx_msg_queue;
+// QueueHandle_t g_rx_msg_queue;
 
 #ifdef CONFIG_IDF_TARGET_ESP32C3
 #define BOOT_KEY_GPIIO  GPIO_NUM_9
@@ -116,18 +123,17 @@ static xQueueHandle s_vscp_espnow_queue; // espnow send queue
 
 static QueueHandle_t s_espnow_queue;
 
-static uint16_t s_espnow_seq[ESPNOW_DATA_MAX] = { 0, 0 };
+//static uint16_t s_espnow_seq[ESPNOW_DATA_MAX] = { 0, 0 };
 
 static uint8_t s_vscp_broadcast_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
-static uint8_t s_vscp_own_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+static uint8_t s_vscp_own_mac[ESP_NOW_ETH_ALEN]       = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
 // Provisioning state
-static espnow_ctrl_status_t s_espnow_ctrl_state = ESPNOW_CTRL_INIT;
+static espnow_ctrl_status_t s_espnow_ctrl_prov_state = ESPNOW_CTRL_INIT;
 
 espnow_sec_t *g_sec; // espnow security structure
 
 // Forward declarations
-
 static void
 vscp_espnow_deinit(void *param);
 
@@ -135,155 +141,44 @@ vscp_espnow_deinit(void *param);
 const int WIFI_CONNECTED_EVENT = BIT0;
 static EventGroupHandle_t wifi_event_group;
 
-
 ///////////////////////////////////////////////////////////////////////////////
-// vscp_espnow_send_cb
+// vscp_heartbeat_task
 //
-// ESPNOW sending or receiving callback function is called in WiFi task.
-// Users should not do lengthy operations from this task. Instead, post
-// necessary data to a queue and handle it from a lower priority task.
+// Sent periodically as a broadcast to all zones/subzones
 //
 
 static void
-vscp_espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status)
+vscp_heartbeat_task(void *pvParameter)
 {
-  vscp_espnow_event_post_t evt;
-  vscp_espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
+  esp_err_t ret = 0;
+  uint8_t dest_mac[ESP_NOW_ETH_ALEN];
+  uint8_t buf[VSCP_ESPNOW_PACKET_MIN_SIZE + 3];
+  size_t size = sizeof(buf);
 
-  ESP_LOGI(TAG, "vscp_espnow_send_cb ");
-
-  if (mac_addr == NULL) {
-    ESP_LOGE(TAG, "Send cb arg error");
-    return;
-  }
-
-  evt.id = VSCP_ESPNOW_SEND_EVT;
-  memcpy(send_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
-  send_cb->status = status;
-  // Put status on event queue
-  if (xQueueSend(s_vscp_espnow_queue, &evt, ESPNOW_MAXDELAY) != pdTRUE) {
-    ESP_LOGW(TAG, "Add to event queue failed");
-  }
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// vscp_espnow_recv_cb
-//
-
-static void
-vscp_espnow_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
-{
-
-  vscp_espnow_event_post_t evt;
-  vscp_espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
-
-  ESP_LOGI(TAG, "                         --------> espnow-x recv cb");
-
-  if (mac_addr == NULL || data == NULL || len <= 0) {
-    ESP_LOGE(TAG, "Receive cb arg error");
-    return;
-  }
-
-  evt.id = VSCP_ESPNOW_RECV_EVT;
-  memcpy(recv_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
-  memcpy(recv_cb->buf, data, len);
-  recv_cb->len = len;
-  // Put message + status on event queue
-  if (xQueueSend(s_vscp_espnow_queue, &evt, ESPNOW_MAXDELAY) != pdTRUE) {
-    ESP_LOGW(TAG, "Send receive queue fail");
-  }
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// vscp_espnow_heartbeat_prepare
-//
-// Prepare ESPNOW data to be sent.
-//
-
-// void vscp_espnow_heartbeat_prepare(vscp_espnow_send_param_t *send_param)
-//{
-//  vscp_espnow_data_t *buf = (vscp_espnow_data_t *)send_param->buffer;
-
-// assert(send_param->len >= sizeof(vscp_espnow_data_t));
-
-// buf->type = IS_BROADCAST_ADDR(send_param->dest_mac)
-//                 ? VSCP_ESPNOW_DATA_BROADCAST
-//                 : VSCP_ESPNOW_DATA_UNICAST;
-// buf->state = send_param->state;
-// buf->seq_num = s_vscp_espnow_seq[buf->type]++;
-// buf->crc = 0;
-// buf->magic = send_param->magic;
-// /* Fill all remaining bytes after the data with random values */
-// esp_fill_random(buf->payload, send_param->len - sizeof(vscp_espnow_data_t));
-// buf->crc = esp_crc16_le(UINT16_MAX, (uint8_t const *)buf, send_param->len);
-//}
-
-static int
-vscpEventToEspNowBuf(uint8_t *buf, uint8_t len, vscp_espnow_event_t *pvscpEspNowEvent)
-{
-  if (len < VSCP_ESPNOW_PACKET_MAX_SIZE) {
-    return -1;
-  }
-  // pvscpEspNowEvent->ttl = 7;
-  //  pvscpEspNowEvent->seq = seq++;
-  // pvscpEspNowEvent->magic = esp_random();
-  //  pvscpEspNowEvent.crc = 0;
-  //   https://grodansparadis.github.io/vscp-doc-spec/#/./class1.information?id=type9
-  pvscpEspNowEvent->head = 0;
-  // pvscpEspNowEvent->timestamp  = 0;
-  pvscpEspNowEvent->nickname   = 0;
-  pvscpEspNowEvent->vscp_class = VSCP_CLASS1_INFORMATION;
-  pvscpEspNowEvent->vscp_type  = VSCP_TYPE_INFORMATION_NODE_HEARTBEAT;
-  pvscpEspNowEvent->len        = 3;
-  pvscpEspNowEvent->data[0]    = 0;
-  pvscpEspNowEvent->data[1]    = 0xff; // All zones
-  pvscpEspNowEvent->data[2]    = 0xff; // All subzones
-
-  // seq
-  // buf[0] = (pvscpEspNowEvent->seq >> 8) & 0xff;
-  // buf[1] = pvscpEspNowEvent->seq & 0xff;
-  // magic
-  // buf[2] = (pvscpEspNowEvent->magic >> 24) & 0xff;
-  // buf[3] = (pvscpEspNowEvent->magic >> 16) & 0xff;
-  // buf[4] = (pvscpEspNowEvent->magic >> 8) & 0xff;
-  // buf[5] = pvscpEspNowEvent->magic & 0xff;
-  // ttl
-  // buf[6] = pvscpEspNowEvent->ttl;
-  // head
-  buf[7] = (pvscpEspNowEvent->head >> 8) & 0xff;
-  buf[8] = pvscpEspNowEvent->head & 0xff;
-  // timestamp
-  // buf[9]  = (pvscpEspNowEvent->timestamp >> 24) & 0xff;
-  // buf[10] = (pvscpEspNowEvent->timestamp >> 16) & 0xff;
-  // buf[11] = (pvscpEspNowEvent->timestamp >> 8) & 0xff;
-  // buf[12] = pvscpEspNowEvent->timestamp & 0xff;
-  // nickname
-  buf[13] = (pvscpEspNowEvent->nickname >> 8) & 0xff;
-  buf[14] = pvscpEspNowEvent->nickname & 0xff;
-  // vscp_class
-  buf[15] = pvscpEspNowEvent->vscp_class;
-  // vscp_type
-  buf[16] = pvscpEspNowEvent->vscp_type;
-  // Payload data
-  for (uint8_t i = 0; i < pvscpEspNowEvent->len; i++) {
-    buf[17 + i] = pvscpEspNowEvent->data[i];
-  }
-  // CRC
-  pvscpEspNowEvent->crc               = esp_crc16_le(UINT16_MAX, (uint8_t const *) buf, 17 + pvscpEspNowEvent->len);
-  buf[17 + pvscpEspNowEvent->len]     = (pvscpEspNowEvent->crc >> 8) & 0xff;
-  buf[17 + pvscpEspNowEvent->len + 1] = pvscpEspNowEvent->crc & 0xff;
-
-  return 0;
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// vscp_espnow_heartbeat_task
-//
-
-static void
-vscp_espnow_heartbeat_task(void *pvParameter)
-{
   ESP_LOGI(TAG, "Start sending VSCP heartbeats");
+
+  espnow_frame_head_t frame_head = {
+    .retransmit_count = 1,
+    .broadcast        = true,
+    .forward_ttl      = 7,
+  };
+
+  ESP_LOGI(TAG, "magic=0x%X", ret);
+
+  
+
+  while (1) {
+
+    vTaskDelay(VSCP_HEART_BEAT_INTERVAL / portTICK_RATE_MS);
+
+    ret = espnow_send(ESPNOW_TYPE_DATA, dest_mac, buf, size, &frame_head, portMAX_DELAY);
+
+    ESP_LOGI(TAG, "VSCP heartbeat sent - ret=0x%X", ret);
+    ESP_ERROR_CONTINUE(ret != ESP_OK, "<%s>", esp_err_to_name(ret));
+  }
+
+  ESP_LOGW(TAG, "Heartbeat task exit %d", ret);
+  vTaskDelete(NULL);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -294,9 +189,6 @@ static void
 vscp_espnow_send_task(void *pvParameter)
 {
   vscp_espnow_event_post_t evt;
-  // uint16_t seq      = 0;
-  // uint16_t recv_seq = 0;
-  //  int recv_magic = 0;
   esp_err_t ret;
   uint8_t dest_mac[ESP_NOW_ETH_ALEN]; // MAC address of destination device.
   vscp_espnow_event_t vscpEspNowEvent;
@@ -308,7 +200,7 @@ vscp_espnow_send_task(void *pvParameter)
   // vTaskDelay(5000 / portTICK_RATE_MS);
   ESP_LOGI(TAG, "Start sending broadcast data");
 
-  //vscpEventToEspNowBuf(buf, sizeof(buf), &vscpEspNowEvent);
+  // vscpEventToEspNowBuf(buf, sizeof(buf), &vscpEspNowEvent);
 
   ESP_LOGI(TAG, "Before broadcast send");
 
@@ -324,21 +216,21 @@ vscp_espnow_send_task(void *pvParameter)
   espnow_frame_head_t frame_head = {
     .retransmit_count = 2,
     .broadcast        = true,
+    .forward_ttl      = 7,
   };
 
   while (1) {
- 
-    ret = espnow_send(ESPNOW_TYPE_DATA,
-                dest_mac,
-                buf,
-                VSCP_ESPNOW_PACKET_MIN_SIZE, //+ vscpEspNowEvent.len,
-                &frame_head,
-                portMAX_DELAY);
 
-    //vTaskDelay(5000 / portTICK_RATE_MS);  
+    ret = espnow_send(ESPNOW_TYPE_DATA,
+                      dest_mac,
+                      buf,
+                      VSCP_ESPNOW_PACKET_MIN_SIZE, //+ vscpEspNowEvent.len,
+                      &frame_head,
+                      portMAX_DELAY);
+
+    vTaskDelay(5000 / portTICK_RATE_MS);
     ESP_LOGI(TAG, "Broadcast sent - ret=0x%X", ret);
     ESP_ERROR_CONTINUE(ret != ESP_OK, "<%s>", esp_err_to_name(ret));
-    
   }
 
   while (xQueueReceive(s_vscp_espnow_queue, &evt, portMAX_DELAY) == pdTRUE) {
@@ -356,10 +248,10 @@ vscp_espnow_send_task(void *pvParameter)
                  MAC2STR(send_cb->mac_addr),
                  send_cb->status);
 
-        //vTaskDelay(2000 / portTICK_RATE_MS);
-        // if (is_broadcast && (send_param->broadcast == false)) {
-        //   break;
-        // }
+        // vTaskDelay(2000 / portTICK_RATE_MS);
+        //  if (is_broadcast && (send_param->broadcast == false)) {
+        //    break;
+        //  }
 
         // if (!is_broadcast) {
         //   send_param->count--;
@@ -381,7 +273,7 @@ vscp_espnow_send_task(void *pvParameter)
         // vscpEspNowEvent.ttl   = 7;
         // vscpEspNowEvent.seq   = seq++;
         // vscpEspNowEvent.magic = esp_random();
-        vscpEventToEspNowBuf(buf, sizeof(buf), &vscpEspNowEvent);
+        // vscpEventToEspNowBuf(buf, sizeof(buf), &vscpEspNowEvent);
 
         /* Send the next data after the previous data is sent. */
         // if (esp_now_send(dest_mac, buf, VSCP_ESPNOW_PACKET_MAX_SIZE) != ESP_OK) {
@@ -390,15 +282,15 @@ vscp_espnow_send_task(void *pvParameter)
         //   vTaskDelete(NULL);
         // }
         espnow_frame_head_t frame_head = {
-          .channel          = 11,
-          .retransmit_count = 0,
-          .broadcast        = true,
-          .forward_ttl      = 0,
-          .magic            = esp_random(),
-          .forward_rssi     = 0,
+          .channel                 = 11,
+          .retransmit_count        = 0,
+          .broadcast               = true,
+          .forward_ttl             = 0,
+          .magic                   = esp_random(),
+          .forward_rssi            = 0,
           .filter_adjacent_channel = 0,
-          .filter_weak_signal = 0,
-          .group = 0,
+          .filter_weak_signal      = 0,
+          .group                   = 0,
         };
 
         memset(buf, 0, sizeof(buf));
@@ -409,7 +301,7 @@ vscp_espnow_send_task(void *pvParameter)
         buf[4]              = 55;
         vscpEspNowEvent.len = 5;
 
-        //espnow_data->size + sizeof(espnow_data_t)
+        // espnow_data->size + sizeof(espnow_data_t)
 
         ret = espnow_send(ESPNOW_TYPE_DATA,
                           dest_mac,
@@ -461,13 +353,13 @@ vscp_espnow_init(void)
   espnow_config_t espnow_config = ESPNOW_INIT_CONFIG_DEFAULT();
   espnow_config.qsize.data      = 64;
   espnow_config.send_retry_num  = 5;
-  strcpy(espnow_config.pmk, "pmk1234567890123");
+  //strcpy(espnow_config.pmk, "pmk1234567890123");
   espnow_init(&espnow_config);
 
   // Initialize ESPNOW and register sending and receiving callback function.
   // ESP_ERROR_CHECK(esp_now_init());
-  //ESP_ERROR_CHECK(esp_now_register_send_cb(vscp_espnow_send_cb));
-  //ESP_ERROR_CHECK(esp_now_register_recv_cb(vscp_espnow_recv_cb));
+  // ESP_ERROR_CHECK(esp_now_register_send_cb(vscp_espnow_send_cb));
+  // ESP_ERROR_CHECK(esp_now_register_recv_cb(vscp_espnow_recv_cb));
 
   // Set primary master key.
   ESP_ERROR_CHECK(esp_now_set_pmk((uint8_t *) CONFIG_ESPNOW_PMK));
@@ -848,7 +740,7 @@ led_task(void *pvParameter)
   while (1) {
     gpio_set_level(GPIO_NUM_2, cnt % 2);
     cnt++;
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
   }
 }
 
@@ -875,10 +767,10 @@ app_main(void)
   }
 
   // Create microsecond timer
-  // ESP_ERROR_CHECK(esp_timer_create());
+  //ESP_ERROR_CHECK(esp_timer_create());
 
   // Start timer
-  // esp_timer_start_periodic();
+  //esp_timer_start_periodic();
 
   // Initialize TCP/IP
   ESP_ERROR_CHECK(esp_netif_init());
@@ -911,8 +803,14 @@ app_main(void)
   gpio_set_level(ACTIVE_LED_GPIO_NUM, 1);
 
   // Create message queues  QueueHandle_t tx_msg_queue
-  g_tx_msg_queue = xQueueCreate(ESPNOW_SIZE_TX_BUF, sizeof(vscp_espnow_event_t)); /*< Outgoing esp-now messages */
-  g_rx_msg_queue = xQueueCreate(ESPNOW_SIZE_TX_BUF, sizeof(vscp_espnow_event_t)); /*< Incoming esp-now messages */
+  // g_tx_msg_queue = xQueueCreate(ESPNOW_SIZE_TX_BUF, sizeof(vscp_espnow_event_t)); /*< Outgoing esp-now messages */
+  // g_rx_msg_queue = xQueueCreate(ESPNOW_SIZE_TX_BUF, sizeof(vscp_espnow_event_t)); /*< Incoming esp-now messages */
+
+  // Initiate message queues
+  for (int i = 0; i < MAX_TCP_CONNECTIONS; i++) {
+    g_tr_tcpsrv[i].msg_queue = xQueueCreate(10, VSCP_ESPNOW_PACKET_MAX_SIZE); // tcp/ip link channel i
+  } 
+  g_tr_mqtt.msg_queue      = xQueueCreate(10, VSCP_ESPNOW_PACKET_MAX_SIZE); // MQTT empties
 
   // **************************************************************************
   //                        NVS - Persistent storage
@@ -979,59 +877,39 @@ app_main(void)
     rv     = nvs_get_str(g_nvsHandle, "password", username, &length);
     ESP_LOGI(TAG, "Password: %s", username);
     length = 16;
-    rv     = nvs_get_blob(g_nvsHandle, "guid", g_device_guid, &length);
-    // ESP_LOGI(TAG,
-    //          "GUID:
-    //          %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
-    //          device_guid[0],
-    //          device_guid[1],
-    //          device_guid[2],
-    //          device_guid[3],
-    //          device_guid[4],
-    //          device_guid[5],
-    //          device_guid[6],
-    //          device_guid[7],
-    //          device_guid[8],
-    //          device_guid[9],
-    //          device_guid[10],
-    //          device_guid[11],
-    //          device_guid[12],
-    //          device_guid[13],
-    //          device_guid[14],
-    //          device_guid[15]);
+    rv     = nvs_get_blob(g_nvsHandle, "guid", g_node_guid, &length);
+
     // If GUID is all zero construct GUID
-    if (!(g_device_guid[0] | g_device_guid[1] | g_device_guid[2] | g_device_guid[3] | g_device_guid[4] |
-          g_device_guid[5] | g_device_guid[6] | g_device_guid[7] | g_device_guid[8] | g_device_guid[9] |
-          g_device_guid[10] | g_device_guid[11] | g_device_guid[12] | g_device_guid[13] | g_device_guid[14] |
-          g_device_guid[15])) {
-      g_device_guid[0] = 0xff;
-      g_device_guid[1] = 0xff;
-      g_device_guid[2] = 0xff;
-      g_device_guid[3] = 0xff;
-      g_device_guid[4] = 0xff;
-      g_device_guid[5] = 0xff;
-      g_device_guid[6] = 0xff;
-      g_device_guid[7] = 0xfe;
-      rv               = esp_efuse_mac_get_default(g_device_guid + 8);
-      // ESP_LOGI(TAG,
-      //          "Constructed GUID:
-      //          %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
-      //          g_device_guid[0],
-      //          g_device_guid[1],
-      //          g_device_guid[2],
-      //          g_device_guid[3],
-      //          g_device_guid[4],
-      //          g_device_guid[5],
-      //          g_device_guid[6],
-      //          g_device_guid[7],
-      //          g_device_guid[8],
-      //          g_device_guid[9],
-      //          g_device_guid[10],
-      //          g_device_guid[11],
-      //          g_device_guid[12],
-      //          g_device_guid[13],
-      //          g_device_guid[14],
-      //          g_device_guid[15]);
+    if (!(g_node_guid[0] | g_node_guid[1] | g_node_guid[2] | g_node_guid[3] | g_node_guid[4] | g_node_guid[5] |
+          g_node_guid[6] | g_node_guid[7] | g_node_guid[8] | g_node_guid[9] | g_node_guid[10] | g_node_guid[11] |
+          g_node_guid[12] | g_node_guid[13] | g_node_guid[14] | g_node_guid[15])) {
+      g_node_guid[0] = 0xff;
+      g_node_guid[1] = 0xff;
+      g_node_guid[2] = 0xff;
+      g_node_guid[3] = 0xff;
+      g_node_guid[4] = 0xff;
+      g_node_guid[5] = 0xff;
+      g_node_guid[6] = 0xff;
+      g_node_guid[7] = 0xfe;
+      rv             = esp_efuse_mac_get_default(g_node_guid + 8);
+      ESP_LOGD(TAG,
+               "Constructed GUID: %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
+               g_node_guid[0],
+               g_node_guid[1],
+               g_node_guid[2],
+               g_node_guid[3],
+               g_node_guid[4],
+               g_node_guid[5],
+               g_node_guid[6],
+               g_node_guid[7],
+               g_node_guid[8],
+               g_node_guid[9],
+               g_node_guid[10],
+               g_node_guid[11],
+               g_node_guid[12],
+               g_node_guid[13],
+               g_node_guid[14],
+               g_node_guid[15]);
     }
   }
 
@@ -1077,18 +955,22 @@ app_main(void)
     ESP_LOGI(TAG, "wifi init");
   }
 
-  
-
   /* Wait for Wi-Fi connection */
   xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, false, true, portMAX_DELAY);
 
   // Start LED controlling tast
   xTaskCreate(&led_task, "led_task", 1024, NULL, 5, NULL);
 
+  // Start heartbeat task vscp_heartbeat_task
+  xTaskCreate(&vscp_heartbeat_task, "vscp_heartbeat_task", 2024, NULL, 5, NULL);
+
+  // Initialize espnow
   vscp_espnow_init();
 
   // Start web server
-  //httpd_handle_t server = start_webserver();
+  httpd_handle_t server = start_webserver();
+
+  xTaskCreate(&tcpsrv_task, "vscp_tcpsrv_task", 2024, NULL, 5, NULL);
 
   ESP_LOGI(TAG, "Going to work now!");
 
@@ -1098,7 +980,7 @@ app_main(void)
 
   while (1) {
     // esp_task_wdt_reset();
-    ESP_LOGI(TAG, "Loop");
+    ESP_LOGI(TAG, "Ctrl - Loop");
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 

@@ -517,3 +517,148 @@ vscp_wifi_init(void)
                                         WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR));
 #endif
 }
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_send_cb
+//
+// ESPNOW sending or receiving callback function is called in WiFi task.
+// Users should not do lengthy operations from this task. Instead, post
+// necessary data to a queue and handle it from a lower priority task.
+//
+
+static void
+vscp_espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status)
+{
+  vscp_espnow_event_post_t evt;
+  vscp_espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
+
+  ESP_LOGI(TAG, "vscp_espnow_send_cb ");
+
+  if (mac_addr == NULL) {
+    ESP_LOGE(TAG, "Send cb arg error");
+    return;
+  }
+
+  evt.id = VSCP_ESPNOW_SEND_EVT;
+  memcpy(send_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
+  send_cb->status = status;
+  // Put status on event queue
+  if (xQueueSend(s_vscp_espnow_queue, &evt, ESPNOW_MAXDELAY) != pdTRUE) {
+    ESP_LOGW(TAG, "Add to event queue failed");
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_recv_cb
+//
+
+static void
+vscp_espnow_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
+{
+
+  vscp_espnow_event_post_t evt;
+  vscp_espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
+
+  ESP_LOGI(TAG, "                         --------> espnow-x recv cb");
+
+  if (mac_addr == NULL || data == NULL || len <= 0) {
+    ESP_LOGE(TAG, "Receive cb arg error");
+    return;
+  }
+
+  evt.id = VSCP_ESPNOW_RECV_EVT;
+  memcpy(recv_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
+  memcpy(recv_cb->buf, data, len);
+  recv_cb->len = len;
+  // Put message + status on event queue
+  if (xQueueSend(s_vscp_espnow_queue, &evt, ESPNOW_MAXDELAY) != pdTRUE) {
+    ESP_LOGW(TAG, "Send receive queue fail");
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_heartbeat_prepare
+//
+// Prepare ESPNOW data to be sent.
+//
+
+// void vscp_espnow_heartbeat_prepare(vscp_espnow_send_param_t *send_param)
+//{
+//  vscp_espnow_data_t *buf = (vscp_espnow_data_t *)send_param->buffer;
+
+// assert(send_param->len >= sizeof(vscp_espnow_data_t));
+
+// buf->type = IS_BROADCAST_ADDR(send_param->dest_mac)
+//                 ? VSCP_ESPNOW_DATA_BROADCAST
+//                 : VSCP_ESPNOW_DATA_UNICAST;
+// buf->state = send_param->state;
+// buf->seq_num = s_vscp_espnow_seq[buf->type]++;
+// buf->crc = 0;
+// buf->magic = send_param->magic;
+// /* Fill all remaining bytes after the data with random values */
+// esp_fill_random(buf->payload, send_param->len - sizeof(vscp_espnow_data_t));
+// buf->crc = esp_crc16_le(UINT16_MAX, (uint8_t const *)buf, send_param->len);
+//}
+
+static int
+vscpEventToEspNowBuf(uint8_t *buf, uint8_t len, vscp_espnow_event_t *pvscpEspNowEvent)
+{
+  if (len < VSCP_ESPNOW_PACKET_MAX_SIZE) {
+    return -1;
+  }
+  // pvscpEspNowEvent->ttl = 7;
+  //  pvscpEspNowEvent->seq = seq++;
+  // pvscpEspNowEvent->magic = esp_random();
+  //  pvscpEspNowEvent.crc = 0;
+  //   https://grodansparadis.github.io/vscp-doc-spec/#/./class1.information?id=type9
+  pvscpEspNowEvent->head = 0;
+  // pvscpEspNowEvent->timestamp  = 0;
+  pvscpEspNowEvent->nickname   = 0;
+  pvscpEspNowEvent->vscp_class = VSCP_CLASS1_INFORMATION;
+  pvscpEspNowEvent->vscp_type  = VSCP_TYPE_INFORMATION_NODE_HEARTBEAT;
+  pvscpEspNowEvent->len        = 3;
+  pvscpEspNowEvent->data[0]    = 0;
+  pvscpEspNowEvent->data[1]    = 0xff; // All zones
+  pvscpEspNowEvent->data[2]    = 0xff; // All subzones
+
+  // seq
+  // buf[0] = (pvscpEspNowEvent->seq >> 8) & 0xff;
+  // buf[1] = pvscpEspNowEvent->seq & 0xff;
+  // magic
+  // buf[2] = (pvscpEspNowEvent->magic >> 24) & 0xff;
+  // buf[3] = (pvscpEspNowEvent->magic >> 16) & 0xff;
+  // buf[4] = (pvscpEspNowEvent->magic >> 8) & 0xff;
+  // buf[5] = pvscpEspNowEvent->magic & 0xff;
+  // ttl
+  // buf[6] = pvscpEspNowEvent->ttl;
+  // head
+  buf[7] = (pvscpEspNowEvent->head >> 8) & 0xff;
+  buf[8] = pvscpEspNowEvent->head & 0xff;
+  // timestamp
+  // buf[9]  = (pvscpEspNowEvent->timestamp >> 24) & 0xff;
+  // buf[10] = (pvscpEspNowEvent->timestamp >> 16) & 0xff;
+  // buf[11] = (pvscpEspNowEvent->timestamp >> 8) & 0xff;
+  // buf[12] = pvscpEspNowEvent->timestamp & 0xff;
+  // nickname
+  buf[13] = (pvscpEspNowEvent->nickname >> 8) & 0xff;
+  buf[14] = pvscpEspNowEvent->nickname & 0xff;
+  // vscp_class
+  buf[15] = pvscpEspNowEvent->vscp_class;
+  // vscp_type
+  buf[16] = pvscpEspNowEvent->vscp_type;
+  // Payload data
+  for (uint8_t i = 0; i < pvscpEspNowEvent->len; i++) {
+    buf[17 + i] = pvscpEspNowEvent->data[i];
+  }
+  // CRC
+  pvscpEspNowEvent->crc               = esp_crc16_le(UINT16_MAX, (uint8_t const *) buf, 17 + pvscpEspNowEvent->len);
+  buf[17 + pvscpEspNowEvent->len]     = (pvscpEspNowEvent->crc >> 8) & 0xff;
+  buf[17 + pvscpEspNowEvent->len + 1] = pvscpEspNowEvent->crc & 0xff;
+
+  return 0;
+}
+
+  // crc        - 
+  //crc = esp_crc16_le(UINT16_MAX, (uint8_t const *)buf, VSCP_ESPNOW_PACKET_MIN_SIZE - 2 + pex->sizeData);
+  //buf[VSCP_ESPNOW_PACKET_MIN_SIZE - 2] = (crc >> 8) & 0xff;
+  //buf[VSCP_ESPNOW_PACKET_MIN_SIZE + 1 - 2] = crc & 0xff;
