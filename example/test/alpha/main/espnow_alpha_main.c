@@ -570,8 +570,8 @@ vscp_espnow_init(void)
   memcpy(send_param->dest_mac, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN);
   vscp_espnow_heart_beat_prepare(send_param); */
 
-  xTaskCreate(vscp_espnow_send_task, "vscp_espnow_send_task", 2048, NULL, 4, NULL);
-  //xTaskCreate(vscp_espnow_recv_task, "vscp_espnow_recv_task", 2048, NULL, 4, NULL);
+  xTaskCreate(vscp_espnow_send_task, "vscp_espnow_send_task", 4048, NULL, 4, NULL);
+  //xTaskCreate(vscp_espnow_recv_task, "vscp_espnow_recv_task", 4048, NULL, 4, NULL);
 
   return ESP_OK;
 }
