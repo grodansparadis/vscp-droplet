@@ -134,6 +134,10 @@ get_sec2_verifier(const char **verifier, uint16_t *verifier_len)
 }
 #endif
 
+///////////////////////////////////////////////////////////////////////////////
+// wifi_provisioning
+//
+
 bool wifi_provisioning(void)
 {
   ESP_LOGI(TAG, "wifi provisioning");

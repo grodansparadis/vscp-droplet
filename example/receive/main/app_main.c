@@ -88,8 +88,8 @@ example_receive_task(void *pvParameter)
 
   for (;;) {
     esp_task_wdt_reset();
-    ret = espnow_recv(ESPNOW_TYPE_DATA, addr, data, &size, &rx_ctrl, portMAX_DELAY); // 
-    ESP_ERROR_CONTINUE(ret != ESP_OK, MACSTR ", error: <%s>", MAC2STR(addr), esp_err_to_name(ret));
+    ret = espnow_recv(ESPNOW_TYPE_DATA, addr, data, &size, &rx_ctrl, 1000 / portTICK_RATE_MS); // 
+    ESP_ERROR_CONTINUE(ret != ESP_OK, MACSTR ",  error: <%s>", MAC2STR(addr), esp_err_to_name(ret));
     ESP_LOGI(TAG, "Data from " MACSTR " Data size=%d", MAC2STR(addr), size);
   }
 

@@ -89,9 +89,90 @@ static const char *TAG = "espnow_alpha";
 // Handle for nvs storage
 nvs_handle_t g_nvsHandle;
 
+
+
+// This mutex protects the espnow_send as it is NOT thread safe
+static SemaphoreHandle_t g_send_lock;
+
 // Transports
 transport_t g_tr_tcpsrv[MAX_TCP_CONNECTIONS] = {};
 transport_t g_tr_mqtt      = {}; // MQTT
+
+static void vscp_heartbeat_task(void *pvParameter);
+static void vscp_espnow_send_task(void *pvParameter);
+
+enum {
+  VSCP_SEND_STATE_NONE,
+  VSCP_SEND_STATE_SENT,         // Event has been sent, no other events can be sent
+  VSCP_SEND_STATE_SEND_CONFIRM  // Event send has been confirmed
+};
+
+typedef struct __state__ {
+  uint8_t state;      // State of send
+  uint64_t timestamp; // Time when state was set
+} vscp_send_state_t;
+
+static vscp_send_state_t g_send_state = {VSCP_SEND_STATE_NONE, 0};
+
+//----------------------------------------------------------
+typedef enum {
+    EXAMPLE_ESPNOW_SEND_CB,
+    EXAMPLE_ESPNOW_RECV_CB,
+} example_espnow_event_id_t;
+
+typedef struct {
+    uint8_t mac_addr[ESP_NOW_ETH_ALEN];
+    esp_now_send_status_t status;
+} example_espnow_event_send_cb_t;
+
+typedef struct {
+    uint8_t mac_addr[ESP_NOW_ETH_ALEN];
+    uint8_t *data;
+    int data_len;
+} example_espnow_event_recv_cb_t;
+
+typedef union {
+    example_espnow_event_send_cb_t send_cb;
+    example_espnow_event_recv_cb_t recv_cb;
+} example_espnow_event_info_t;
+
+/* When ESPNOW sending or receiving callback function is called, post event to ESPNOW task. */
+typedef struct {
+    example_espnow_event_id_t id;
+    example_espnow_event_info_t info;
+} example_espnow_event_t;
+
+enum {
+    EXAMPLE_ESPNOW_DATA_BROADCAST,
+    EXAMPLE_ESPNOW_DATA_UNICAST,
+    EXAMPLE_ESPNOW_DATA_MAX,
+};
+
+/* User defined field of ESPNOW data in this example. */
+typedef struct {
+    uint8_t type;                         //Broadcast or unicast ESPNOW data.
+    uint8_t state;                        //Indicate that if has received broadcast ESPNOW data or not.
+    uint16_t seq_num;                     //Sequence number of ESPNOW data.
+    uint16_t crc;                         //CRC16 value of ESPNOW data.
+    uint32_t magic;                       //Magic number which is used to determine which device to send unicast ESPNOW data.
+    uint8_t payload[0];                   //Real payload of ESPNOW data.
+} __attribute__((packed)) example_espnow_data_t;
+
+/* Parameters of sending ESPNOW data. */
+typedef struct {
+    bool unicast;                         //Send unicast ESPNOW data.
+    bool broadcast;                       //Send broadcast ESPNOW data.
+    uint8_t state;                        //Indicate that if has received broadcast ESPNOW data or not.
+    uint32_t magic;                       //Magic number which is used to determine which device to send unicast ESPNOW data.
+    uint16_t count;                       //Total count of unicast ESPNOW data to be sent.
+    uint16_t delay;                       //Delay between sending two ESPNOW data, unit: ms.
+    int len;                              //Length of ESPNOW data to be sent, unit: byte.
+    uint8_t *buffer;                      //Buffer pointing to ESPNOW data.
+    uint8_t dest_mac[ESP_NOW_ETH_ALEN];   //MAC address of destination device.
+} example_espnow_send_param_t;
+
+//----------------------------------------------------------
+
 
 ///////////////////////////////////////////////////////////
 //                      V S C P
@@ -119,14 +200,11 @@ SemaphoreHandle_t g_ctrl_task_sem;
 #define CONFIG_LED_GPIO GPIO_NUM_2
 #endif
 
-static xQueueHandle s_vscp_espnow_queue; // espnow send queue
-
-static QueueHandle_t s_espnow_queue;
-
-//static uint16_t s_espnow_seq[ESPNOW_DATA_MAX] = { 0, 0 };
+static xQueueHandle s_vscp_espnow_queue; // espnow send/receive queue
 
 static uint8_t s_vscp_broadcast_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 static uint8_t s_vscp_own_mac[ESP_NOW_ETH_ALEN]       = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+static uint16_t s_vscp_espnow_seq[ESPNOW_DATA_MAX] = { 0, 0 };
 
 // Provisioning state
 static espnow_ctrl_status_t s_espnow_ctrl_prov_state = ESPNOW_CTRL_INIT;
@@ -141,293 +219,8 @@ vscp_espnow_deinit(void *param);
 const int WIFI_CONNECTED_EVENT = BIT0;
 static EventGroupHandle_t wifi_event_group;
 
-///////////////////////////////////////////////////////////////////////////////
-// vscp_heartbeat_task
-//
-// Sent periodically as a broadcast to all zones/subzones
-//
 
-static void
-vscp_heartbeat_task(void *pvParameter)
-{
-  esp_err_t ret = 0;
-  uint8_t dest_mac[ESP_NOW_ETH_ALEN];
-  uint8_t buf[VSCP_ESPNOW_PACKET_MIN_SIZE + 3];
-  size_t size = sizeof(buf);
 
-  ESP_LOGI(TAG, "Start sending VSCP heartbeats");
-
-  espnow_frame_head_t frame_head = {
-    .retransmit_count = 1,
-    .broadcast        = true,
-    .forward_ttl      = 7,
-  };
-
-  ESP_LOGI(TAG, "magic=0x%X", ret);
-
-  
-
-  while (1) {
-
-    vTaskDelay(VSCP_HEART_BEAT_INTERVAL / portTICK_RATE_MS);
-
-    ret = espnow_send(ESPNOW_TYPE_DATA, dest_mac, buf, size, &frame_head, portMAX_DELAY);
-
-    ESP_LOGI(TAG, "VSCP heartbeat sent - ret=0x%X", ret);
-    ESP_ERROR_CONTINUE(ret != ESP_OK, "<%s>", esp_err_to_name(ret));
-  }
-
-  ESP_LOGW(TAG, "Heartbeat task exit %d", ret);
-  vTaskDelete(NULL);
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// vscp_espnow_send_task
-//
-
-static void
-vscp_espnow_send_task(void *pvParameter)
-{
-  vscp_espnow_event_post_t evt;
-  esp_err_t ret;
-  uint8_t dest_mac[ESP_NOW_ETH_ALEN]; // MAC address of destination device.
-  vscp_espnow_event_t vscpEspNowEvent;
-  uint8_t buf[VSCP_ESPNOW_PACKET_MAX_SIZE];
-  static int cnt = 0;
-
-  memcpy(dest_mac, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN);
-
-  // vTaskDelay(5000 / portTICK_RATE_MS);
-  ESP_LOGI(TAG, "Start sending broadcast data");
-
-  // vscpEventToEspNowBuf(buf, sizeof(buf), &vscpEspNowEvent);
-
-  ESP_LOGI(TAG, "Before broadcast send");
-
-  // espnow_frame_head_t frame_head = {
-  //   .channel = 11,
-  //   .retransmit_count = 0,
-  //   .broadcast        = true,
-  //   .forward_ttl      = 1,
-  //   .ack = 0,
-  // };
-
-  // ESPNOW_FRAME_CONFIG_DEFAULT();
-  espnow_frame_head_t frame_head = {
-    .retransmit_count = 2,
-    .broadcast        = true,
-    .forward_ttl      = 7,
-  };
-
-  while (1) {
-
-    ret = espnow_send(ESPNOW_TYPE_DATA,
-                      dest_mac,
-                      buf,
-                      VSCP_ESPNOW_PACKET_MIN_SIZE, //+ vscpEspNowEvent.len,
-                      &frame_head,
-                      portMAX_DELAY);
-
-    vTaskDelay(5000 / portTICK_RATE_MS);
-    ESP_LOGI(TAG, "Broadcast sent - ret=0x%X", ret);
-    ESP_ERROR_CONTINUE(ret != ESP_OK, "<%s>", esp_err_to_name(ret));
-  }
-
-  while (xQueueReceive(s_vscp_espnow_queue, &evt, portMAX_DELAY) == pdTRUE) {
-
-    switch (evt.id) {
-
-      case VSCP_ESPNOW_SEND_EVT: {
-
-        vscp_espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
-        // is_broadcast = IS_BROADCAST_ADDR(send_cb->mac_addr);
-
-        ESP_LOGD(TAG,
-                 "--> Send frame %d to " MACSTR ", status1: %d",
-                 cnt++,
-                 MAC2STR(send_cb->mac_addr),
-                 send_cb->status);
-
-        // vTaskDelay(2000 / portTICK_RATE_MS);
-        //  if (is_broadcast && (send_param->broadcast == false)) {
-        //    break;
-        //  }
-
-        // if (!is_broadcast) {
-        //   send_param->count--;
-        //   if (send_param->count == 0) {
-        //     ESP_LOGI(TAG, "Send done");
-        //     vscp_espnow_deinit(NULL);
-        //     vTaskDelete(NULL);
-        //   }
-        // }
-
-        /* Delay a while before sending the next data. */
-        // if (CONFIG_ESPNOW_SEND_DELAY > 0) {
-        // vTaskDelay(1000 / portTICK_RATE_MS);
-        //}
-
-        memcpy(dest_mac, send_cb->mac_addr, ESP_NOW_ETH_ALEN);
-        // scp_espnow_heart_beat_prepare(send_param);
-
-        // vscpEspNowEvent.ttl   = 7;
-        // vscpEspNowEvent.seq   = seq++;
-        // vscpEspNowEvent.magic = esp_random();
-        // vscpEventToEspNowBuf(buf, sizeof(buf), &vscpEspNowEvent);
-
-        /* Send the next data after the previous data is sent. */
-        // if (esp_now_send(dest_mac, buf, VSCP_ESPNOW_PACKET_MAX_SIZE) != ESP_OK) {
-        //   ESP_LOGE(TAG, "Send error");
-        //   vscp_espnow_deinit(NULL);
-        //   vTaskDelete(NULL);
-        // }
-        espnow_frame_head_t frame_head = {
-          .channel                 = 11,
-          .retransmit_count        = 0,
-          .broadcast               = true,
-          .forward_ttl             = 0,
-          .magic                   = esp_random(),
-          .forward_rssi            = 0,
-          .filter_adjacent_channel = 0,
-          .filter_weak_signal      = 0,
-          .group                   = 0,
-        };
-
-        memset(buf, 0, sizeof(buf));
-        buf[0]              = 11;
-        buf[1]              = 22;
-        buf[2]              = 33;
-        buf[3]              = 44;
-        buf[4]              = 55;
-        vscpEspNowEvent.len = 5;
-
-        // espnow_data->size + sizeof(espnow_data_t)
-
-        ret = espnow_send(ESPNOW_TYPE_DATA,
-                          dest_mac,
-                          buf,
-                          VSCP_ESPNOW_PACKET_MIN_SIZE + vscpEspNowEvent.len,
-                          &frame_head,
-                          portMAX_DELAY);
-
-        ESP_LOGI(TAG,
-                 "send frame %d to ff:ff:ff:ff:ff:fe:" MACSTR ":00:00 - ret=%d ch=%d",
-                 cnt++,
-                 MAC2STR(send_cb->mac_addr),
-                 (int) ret,
-                 (int) frame_head.channel);
-
-        break;
-      }
-
-      case VSCP_ESPNOW_RECV_EVT: {
-        ESP_LOGI(TAG, "Receive: %d", evt.id);
-        break;
-      } // receive
-
-      default:
-        ESP_LOGE(TAG, "Callback type error: %d", evt.id);
-        break;
-    }
-  }
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// vscp_espnow_init
-//
-
-static esp_err_t
-vscp_espnow_init(void)
-{
-  // vscp_espnow_send_param_t *send_param;
-
-  // Create the event queue
-  s_vscp_espnow_queue = xQueueCreate(ESPNOW_QUEUE_SIZE, sizeof(vscp_espnow_event_post_t));
-  if (s_vscp_espnow_queue == NULL) {
-    ESP_LOGE(TAG, "Create mutex fail");
-    return ESP_FAIL;
-  }
-
-  // g_send_lock = xSemaphoreCreateMutex();
-  // ESP_ERROR_RETURN(!g_send_lock, ESP_FAIL, "Create send semaphore mutex fail");
-  espnow_config_t espnow_config = ESPNOW_INIT_CONFIG_DEFAULT();
-  espnow_config.qsize.data      = 64;
-  espnow_config.send_retry_num  = 5;
-  //strcpy(espnow_config.pmk, "pmk1234567890123");
-  espnow_init(&espnow_config);
-
-  // Initialize ESPNOW and register sending and receiving callback function.
-  // ESP_ERROR_CHECK(esp_now_init());
-  // ESP_ERROR_CHECK(esp_now_register_send_cb(vscp_espnow_send_cb));
-  // ESP_ERROR_CHECK(esp_now_register_recv_cb(vscp_espnow_recv_cb));
-
-  // Set primary master key.
-  ESP_ERROR_CHECK(esp_now_set_pmk((uint8_t *) CONFIG_ESPNOW_PMK));
-
-  // Add broadcast peer information to peer list.
-  esp_now_peer_info_t *peer = malloc(sizeof(esp_now_peer_info_t));
-  if (NULL == peer) {
-    ESP_LOGE(TAG, "Malloc peer information fail");
-    vSemaphoreDelete(s_vscp_espnow_queue);
-    esp_now_deinit();
-    return ESP_FAIL;
-  }
-  memset(peer, 0, sizeof(esp_now_peer_info_t));
-  peer->channel = CONFIG_ESPNOW_CHANNEL;
-  peer->ifidx   = ESPNOW_WIFI_IF;
-  peer->encrypt = false;
-  memcpy(peer->peer_addr, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN);
-  // ESP_ERROR_CHECK(esp_now_add_peer(peer));
-  esp_now_add_peer(peer);
-  free(peer);
-
-  // Initialize sending parameters.
-  /* send_param = malloc(sizeof(vscp_espnow_send_param_t));
-  if (NULL == send_param) {
-    ESP_LOGE(TAG, "Malloc send parameter fail");
-    vSemaphoreDelete(s_vscp_espnow_queue);
-    esp_now_deinit();
-    return ESP_FAIL;
-  } */
-
-  /* memset(send_param, 0, sizeof(vscp_espnow_send_param_t));
-  send_param->unicast = false;
-  send_param->broadcast = true;
-  send_param->state = 0;
-  send_param->magic = esp_random();
-  send_param->count = CONFIG_ESPNOW_SEND_COUNT;
-  send_param->delay = CONFIG_ESPNOW_SEND_DELAY;
-  send_param->len = CONFIG_ESPNOW_SEND_LEN;
-  send_param->buffer = malloc(CONFIG_ESPNOW_SEND_LEN);
-  if (send_param->buffer == NULL) {
-    ESP_LOGE(TAG, "Malloc send buffer fail");
-    free(send_param);
-    vSemaphoreDelete(s_vscp_espnow_queue);
-    esp_now_deinit();
-    return ESP_FAIL;
-  }
-  memcpy(send_param->dest_mac, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN);
-  vscp_espnow_heart_beat_prepare(send_param); */
-
-  xTaskCreate(vscp_espnow_send_task, "vscp_espnow_send_task", 4096, NULL, 4, NULL);
-  // xTaskCreate(vscp_espnow_recv_task, "vscp_espnow_recv_task", 2048, NULL, 4, NULL);
-
-  return ESP_OK;
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// vscp_espnow_deinit
-//
-
-static void
-vscp_espnow_deinit(void *param)
-{
-  // free(send_param->buffer);
-  // free(send_param);
-  vSemaphoreDelete(s_vscp_espnow_queue);
-
-  esp_now_deinit();
-}
 
 ///////////////////////////////////////////////////////////////////////////////
 // security
@@ -615,14 +408,7 @@ event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *ev
   }
 }
 
-static void
-wifi_init_sta(void)
-{
-  /* Start Wi-Fi in station mode */
-  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA)); // WIFI_MODE_APSTA
-  ESP_ERROR_CHECK(esp_wifi_start());
-  esp_wifi_set_channel(11, 0);
-}
+
 
 ///////////////////////////////////////////////////////////////////////////////
 // get_device_service_name
@@ -726,6 +512,140 @@ wifi_prov_print_qr(const char *name, const char *username, const char *pop, cons
            payload);
 }
 
+/* Prepare ESPNOW data to be sent. */
+void example_espnow_data_prepare(example_espnow_send_param_t *send_param)
+{
+    example_espnow_data_t *buf = (example_espnow_data_t *)send_param->buffer;
+
+    assert(send_param->len >= sizeof(example_espnow_data_t));
+
+    buf->type = IS_BROADCAST_ADDR(send_param->dest_mac) ? EXAMPLE_ESPNOW_DATA_BROADCAST : EXAMPLE_ESPNOW_DATA_UNICAST;
+    buf->state = send_param->state;
+    buf->seq_num = s_vscp_espnow_seq[buf->type]++;
+    buf->crc = 0;
+    buf->magic = send_param->magic;
+    /* Fill all remaining bytes after the data with random values */
+    esp_fill_random(buf->payload, send_param->len - sizeof(example_espnow_data_t));
+    buf->crc = esp_crc16_le(UINT16_MAX, (uint8_t const *)buf, send_param->len);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_send_cb
+//
+// ESPNOW sending or receiving callback function is called in WiFi task.
+// Users should not do lengthy operations from this task. Instead, post
+// necessary data to a queue and handle it from a lower priority task.
+//
+
+// static void
+// vscp_espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status)
+// {
+//   vscp_espnow_event_post_t evt;
+//   vscp_espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
+
+//   //ESP_LOGI(TAG, "---------------------> vscp_espnow_send_cb ");
+
+//   if (mac_addr == NULL) {
+//     ESP_LOGE(TAG, "Send cb arg error");
+//     return;
+//   }
+
+//   g_send_state.state = VSCP_SEND_STATE_SEND_CONFIRM;
+//   g_send_state.timestamp = esp_timer_get_time();
+
+//   evt.id = VSCP_ESPNOW_SEND_EVT;
+//   memcpy(send_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
+//   send_cb->status = status;
+//   //Put status on event queue
+//   if (xQueueSend(s_vscp_espnow_queue, &evt, ESPNOW_MAXDELAY) != pdTRUE) {
+//     ESP_LOGW(TAG, "Add to event queue failed");
+//   }
+// }
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_recv_cb
+//
+
+// static void
+// vscp_espnow_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
+// {
+
+//   vscp_espnow_event_post_t evt;
+//   vscp_espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
+
+//   //ESP_LOGI(TAG, "                         --------> espnow-x recv cb");
+
+//   if (mac_addr == NULL || data == NULL || len <= 0) {
+//     ESP_LOGE(TAG, "Receive cb arg error");
+//     return;
+//   }
+
+//   evt.id = VSCP_ESPNOW_RECV_EVT;
+//   memcpy(recv_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
+//   memcpy(recv_cb->buf, data, len);
+//   recv_cb->len = len;
+//   // Put message + status on event queue
+//   if (xQueueSend(s_vscp_espnow_queue, &evt, ESPNOW_MAXDELAY) != pdTRUE) {
+//     ESP_LOGW(TAG, "Send receive queue fail");
+//   }
+// }
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_work_task
+//
+
+// static void
+// vscp_work_task(void *pvParameter)
+// {
+//   vscp_espnow_event_post_t evt;
+//   esp_err_t ret;
+//   uint8_t dest_mac[ESP_NOW_ETH_ALEN]; // MAC address of destination device.
+//   vscp_espnow_event_t vscpEspNowEvent;
+//   int cnt = 0;
+
+//   for (;;) { 
+
+//     ret = xQueueReceive(s_vscp_espnow_queue, &evt, (1000 / portTICK_RATE_MS));
+
+//     esp_task_wdt_reset();
+//     //ESP_LOGI(TAG,"HoHo");
+//     if (ret != pdTRUE) continue;
+
+//     //ESP_LOGI(TAG,"==============================> Event: %d", evt.id);
+
+//     switch (evt.id) {
+
+//       case VSCP_ESPNOW_SEND_EVT: {
+
+//         g_send_state.state = VSCP_SEND_STATE_NONE;
+//         g_send_state.timestamp = esp_timer_get_time();
+
+//         vscp_espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
+//         bool is_broadcast = IS_BROADCAST_ADDR(send_cb->mac_addr);
+
+//         ESP_LOGI(TAG,
+//                  "-->> %d to " MACSTR ", status: %d",
+//                  cnt++,
+//                  MAC2STR(send_cb->mac_addr),
+//                  send_cb->status);
+
+//         break;
+//       }
+
+//       case VSCP_ESPNOW_RECV_EVT: {
+//         ESP_LOGI(TAG, "Receive: %d", evt.id);
+//         break;
+//       } // receive
+
+//       default:
+//         ESP_LOGE(TAG, "Callback type error: %d", evt.id);
+//         break;
+//     }
+//   }
+
+//   ESP_LOGE(TAG, "The end");
+// }
+
 ///////////////////////////////////////////////////////////////////////////////
 // LED status task
 //
@@ -745,15 +665,454 @@ led_task(void *pvParameter)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// vscp_heartbeat_task
+//
+// Sent periodically as a broadcast to all zones/subzones
+//
+
+static void
+vscp_heartbeat_task(void *pvParameter)
+{
+  esp_err_t ret = 0;
+  uint8_t dest_mac[ESP_NOW_ETH_ALEN];
+  uint8_t buf[VSCP_ESPNOW_PACKET_MIN_SIZE + 3];
+  size_t size = sizeof(buf);
+
+  ESP_LOGI(TAG, "Start sending VSCP heartbeats");
+
+  espnow_frame_head_t frame_head = {
+    .retransmit_count = 1,
+    .broadcast        = true,
+    .forward_ttl      = 7,
+  };
+
+  ESP_LOGI(TAG, "magic=0x%X", ret);
+
+  while (1) {
+
+    vTaskDelay(VSCP_HEART_BEAT_INTERVAL / portTICK_RATE_MS);
+
+    //if (pthread_mutex_lock(&g_espnow_send_mutex) == 0){
+    if(xSemaphoreTake( g_send_lock, ( TickType_t ) 2 ) ) {
+      ret = espnow_send(ESPNOW_TYPE_DATA, dest_mac, buf, size, &frame_head, portMAX_DELAY);
+      ret = esp_now_send(dest_mac, buf, size);
+      xSemaphoreGive(g_send_lock);
+      uint32_t hf = esp_get_free_heap_size();
+      heap_caps_check_integrity_all(true);
+      ESP_LOGI(TAG, "---------> VSCP heartbeat sent - ret=0x%X heap=%X", ret, hf);
+    } 
+
+    //ESP_LOGI(TAG, "VSCP heartbeat sent - ret=0x%X", ret);
+    //ESP_ERROR_CONTINUE(ret != ESP_OK, "<%s>", esp_err_to_name(ret));
+  }
+
+  ESP_LOGW(TAG, "Heartbeat task exit %d", ret);
+  vTaskDelete(NULL);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_send_task
+//
+
+static void
+vscp_espnow_send_task(void *pvParameter)
+{
+  vscp_espnow_event_post_t evt;
+  esp_err_t ret = 0;
+  uint8_t dest_mac[ESP_NOW_ETH_ALEN]; // MAC address of destination device.
+  vscp_espnow_event_t vscpEspNowEvent;
+  uint8_t buf[VSCP_ESPNOW_PACKET_MAX_SIZE];
+  static int cnt = 0;
+
+  //vTaskDelay(5000 / portTICK_RATE_MS);
+  ESP_LOGI(TAG, "Start sending broadcast data");
+
+  // vscpEventToEspNowBuf(buf, sizeof(buf), &vscpEspNowEvent);
+
+  //ESP_LOGI(TAG, "Before broadcast send");
+
+  espnow_frame_head_t frame_head = {
+    .channel = 11,
+    .retransmit_count = 1,
+    .broadcast        = true,
+    .forward_ttl      = 7,
+    .ack = 0,
+  };
+
+  // ESPNOW_FRAME_CONFIG_DEFAULT();
+  // espnow_frame_head_t frame_head = {
+  //   .retransmit_count = 2,
+  //   .broadcast        = true,
+  //   .forward_ttl      = 7,
+  // };
+
+  while (1) {
+    
+    //esp_task_wdt_reset();
+
+    //if (pthread_mutex_lock(&g_espnow_send_mutex) == 0){
+    if (xSemaphoreTake( g_send_lock, ( TickType_t ) 200 ) ) {       
+      //if (g_send_state.state == VSCP_SEND_STATE_NONE) {
+        memcpy(dest_mac, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN);
+        //ret = esp_now_send(dest_mac, buf, VSCP_ESPNOW_PACKET_MIN_SIZE);        
+        ret = espnow_send(ESPNOW_TYPE_DATA,
+                           dest_mac,
+                           buf,
+                           VSCP_ESPNOW_PACKET_MIN_SIZE, //+ vscpEspNowEvent.len,
+                           &frame_head,
+                           portMAX_DELAY);
+        //g_send_state.state = VSCP_SEND_STATE_SENT;
+        //g_send_state.timestamp = esp_timer_get_time();
+        uint32_t hf = esp_get_free_heap_size();
+        //heap_caps_check_integrity_all(true);
+        ESP_LOGI(TAG, "Broadcast sent - ret=0x%X heap=%X", ret, hf);
+        //g_send_state.state = VSCP_SEND_STATE_NONE;
+        //g_send_state.timestamp = esp_timer_get_time();
+      //}
+      // Check for timeout
+      // else if ((g_send_state.state ==VSCP_SEND_STATE_SENT) && ((esp_timer_get_time() - g_send_state.timestamp) > 5000000L) ){
+      //   ESP_LOGI(TAG, "Send timout");  
+      //   g_send_state.state = VSCP_SEND_STATE_NONE;
+      //   g_send_state.timestamp = esp_timer_get_time();
+      // }
+      // else if (g_send_state.state ==VSCP_SEND_STATE_SEND_CONFIRM ){
+      //   ESP_LOGI(TAG, "Send Confirm reset"); 
+      //   g_send_state.state = VSCP_SEND_STATE_NONE;
+      //   g_send_state.timestamp = esp_timer_get_time();
+      // }
+
+      //pthread_mutex_unlock(&g_espnow_send_mutex);
+      xSemaphoreGive(g_send_lock);
+      
+      //ESP_ERROR_BREAK(ret != ESP_OK, "<%s>", esp_err_to_name(ret));
+    }
+   
+    vTaskDelay(10/ portTICK_RATE_MS);    
+  }
+
+  vTaskDelete(NULL);
+
+  // uint32_t hf = esp_get_free_heap_size();
+  // ESP_LOGI(TAG, "Ending - ret=0x%X heap=%X", ret, hf);
+
+  // while (xQueueReceive(s_vscp_espnow_queue, &evt, portMAX_DELAY) == pdTRUE) {
+
+  //   switch (evt.id) {
+
+  //     case VSCP_ESPNOW_SEND_EVT: {
+
+  //       vscp_espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
+  //       // is_broadcast = IS_BROADCAST_ADDR(send_cb->mac_addr);
+
+  //       ESP_LOGI(TAG,
+  //                "--> Send frame %d to " MACSTR ", status1: %d",
+  //                cnt++,
+  //                MAC2STR(send_cb->mac_addr),
+  //                send_cb->status);
+
+  //       // vTaskDelay(2000 / portTICK_RATE_MS);
+  //       //  if (is_broadcast && (send_param->broadcast == false)) {
+  //       //    break;
+  //       //  }
+
+  //       // if (!is_broadcast) {
+  //       //   send_param->count--;
+  //       //   if (send_param->count == 0) {
+  //       //     ESP_LOGI(TAG, "Send done");
+  //       //     vscp_espnow_deinit(NULL);
+  //       //     vTaskDelete(NULL);
+  //       //   }
+  //       // }
+
+  //       /* Delay a while before sending the next data. */
+  //       // if (CONFIG_ESPNOW_SEND_DELAY > 0) {
+  //       // vTaskDelay(1000 / portTICK_RATE_MS);
+  //       //}
+
+  //       memcpy(dest_mac, send_cb->mac_addr, ESP_NOW_ETH_ALEN);
+  //       // scp_espnow_heart_beat_prepare(send_param);
+
+  //       // vscpEspNowEvent.ttl   = 7;
+  //       // vscpEspNowEvent.seq   = seq++;
+  //       // vscpEspNowEvent.magic = esp_random();
+  //       // vscpEventToEspNowBuf(buf, sizeof(buf), &vscpEspNowEvent);
+
+  //       /* Send the next data after the previous data is sent. */
+  //       // if (esp_now_send(dest_mac, buf, VSCP_ESPNOW_PACKET_MAX_SIZE) != ESP_OK) {
+  //       //   ESP_LOGE(TAG, "Send error");
+  //       //   vscp_espnow_deinit(NULL);
+  //       //   vTaskDelete(NULL);
+  //       // }
+  //       // espnow_frame_head_t frame_head = {
+  //       //   .channel                 = 11,
+  //       //   .retransmit_count        = 0,
+  //       //   .broadcast               = true,
+  //       //   .forward_ttl             = 0,
+  //       //   .magic                   = esp_random(),
+  //       //   .forward_rssi            = 0,
+  //       //   .filter_adjacent_channel = 0,
+  //       //   .filter_weak_signal      = 0,
+  //       //   .group                   = 0,
+  //       // };
+
+  //       memset(buf, 0, sizeof(buf));
+  //       buf[0]              = 11;
+  //       buf[1]              = 22;
+  //       buf[2]              = 33;
+  //       buf[3]              = 44;
+  //       buf[4]              = 55;
+  //       vscpEspNowEvent.len = 5;
+
+  //       // espnow_data->size + sizeof(espnow_data_t)
+
+  //       // ret = espnow_send(ESPNOW_TYPE_DATA,
+  //       //                   dest_mac,
+  //       //                   buf,
+  //       //                   VSCP_ESPNOW_PACKET_MIN_SIZE + vscpEspNowEvent.len,
+  //       //                   &frame_head,
+  //       //                   portMAX_DELAY);
+
+  //       // ESP_LOGI(TAG,
+  //       //          "send frame %d to ff:ff:ff:ff:ff:fe:" MACSTR ":00:00 - ret=%d ch=%d",
+  //       //          cnt++,
+  //       //          MAC2STR(send_cb->mac_addr),
+  //       //          (int) ret,
+  //       //          (int) frame_head.channel);
+
+  //       break;
+  //     }
+
+  //     case VSCP_ESPNOW_RECV_EVT: {
+  //       ESP_LOGI(TAG, "Receive: %d", evt.id);
+  //       break;
+  //     } // receive
+
+  //     default:
+  //       ESP_LOGE(TAG, "Callback type error: %d", evt.id);
+  //       break;
+  //   }
+  // }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_receive_task
+//
+
+void
+vscp_espnow_recv_task(void *pvParameter)
+{
+  esp_err_t ret = 0;
+  char *data                    = ESP_MALLOC(ESPNOW_DATA_LEN);
+  size_t size                   = ESPNOW_DATA_LEN;
+  uint8_t addr[ESPNOW_ADDR_LEN] = { 0 };
+  wifi_pkt_rx_ctrl_t rx_ctrl    = { 0 };
+
+  ESP_LOGI(TAG, "Receive task started --->");
+
+  // vTaskDelay(4000 / portTICK_PERIOD_MS);
+
+  for (;;) {
+    esp_task_wdt_reset();
+    ret = espnow_recv(ESPNOW_TYPE_DATA, addr, data, &size, &rx_ctrl, 1000 / portTICK_RATE_MS); // 
+    ESP_ERROR_CONTINUE(ret != ESP_OK, MACSTR ",  error: <%s>", MAC2STR(addr), esp_err_to_name(ret));
+    ESP_LOGI(TAG, "Data from " MACSTR " Data size=%d", MAC2STR(addr), size);
+  }
+
+  ESP_LOGW(TAG, "Receive task exit %d", ret);
+  ESP_FREE(data);
+  vTaskDelete(NULL);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_init
+//
+
+static esp_err_t
+vscp_espnow_init(void)
+{
+  espnow_send_param_t *send_param;
+
+  // Create the event queue
+  s_vscp_espnow_queue = xQueueCreate(ESPNOW_QUEUE_SIZE, sizeof(vscp_espnow_event_post_t));
+  if (s_vscp_espnow_queue == NULL) {
+    ESP_LOGE(TAG, "Create mutex fail");
+    return ESP_FAIL;
+  }
+
+  g_send_lock = xSemaphoreCreateMutex();
+  ESP_ERROR_RETURN(!g_send_lock, ESP_FAIL, "Create send semaphore mutex fail");
+  
+  espnow_config_t espnow_config = ESPNOW_INIT_CONFIG_DEFAULT();
+  espnow_config.qsize.data      = 64;
+  espnow_config.send_retry_num  = 5;
+  //strcpy(espnow_config.pmk, "pmk1234567890123");
+  espnow_init(&espnow_config);
+
+  // Initialize ESPNOW and register sending and receiving callback function.
+  //ESP_ERROR_CHECK(esp_now_init());
+  
+  //ESP_ERROR_CHECK(esp_now_register_send_cb(vscp_espnow_send_cb));
+  //ESP_ERROR_CHECK(esp_now_register_recv_cb(vscp_espnow_recv_cb));
+
+  // Set primary master key.
+  ESP_ERROR_CHECK(esp_now_set_pmk((uint8_t *) CONFIG_ESPNOW_PMK));
+
+  // Add broadcast peer information to peer list.
+  esp_now_peer_info_t *peer = malloc(sizeof(esp_now_peer_info_t));
+  if (NULL == peer) {
+    ESP_LOGE(TAG, "Malloc peer information fail");
+    vSemaphoreDelete(s_vscp_espnow_queue);
+    esp_now_deinit();
+    return ESP_FAIL;
+  }
+  memset(peer, 0, sizeof(esp_now_peer_info_t));
+  peer->channel = CONFIG_ESPNOW_CHANNEL;
+  peer->ifidx   = ESPNOW_WIFI_IF;
+  peer->encrypt = false;
+  memcpy(peer->peer_addr, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN);
+  //ESP_ERROR_CHECK(esp_now_add_peer(peer));
+  free(peer);
+
+  // Initialize sending parameters.
+  send_param = malloc(sizeof(espnow_send_param_t));
+  if (NULL == send_param) {
+    ESP_LOGE(TAG, "Malloc send parameter fail");
+    vSemaphoreDelete(s_vscp_espnow_queue);
+    esp_now_deinit();
+    return ESP_FAIL;
+  }
+
+  memset(send_param, 0, sizeof(espnow_send_param_t));
+  send_param->unicast = false;
+  send_param->broadcast = true;
+  send_param->state = 0;
+  send_param->magic = esp_random();
+  send_param->count = 10000;
+  send_param->delay = 0;
+  send_param->len = 100;
+  send_param->buffer = malloc(100);
+  if (send_param->buffer == NULL) {
+    ESP_LOGE(TAG, "Malloc send buffer fail");
+    free(send_param);
+    vSemaphoreDelete(s_vscp_espnow_queue);
+    esp_now_deinit();
+    return ESP_FAIL;
+  }
+  memcpy(send_param->dest_mac, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN);
+  //vscp_espnow_heart_beat_prepare(send_param); 
+
+  return ESP_OK;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_deinit
+//
+
+static void
+vscp_espnow_deinit(void *param)
+{
+  // free(send_param->buffer);
+  // free(send_param);
+  vSemaphoreDelete(s_vscp_espnow_queue);
+
+  esp_now_deinit();
+}
+
+/* WiFi should start before using ESPNOW */
+static void example_wifi_init(void)
+{
+    //ESP_ERROR_CHECK(esp_netif_init());
+    //ESP_ERROR_CHECK(esp_event_loop_create_default());
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK( esp_wifi_init(&cfg) );
+    ESP_ERROR_CHECK( esp_wifi_set_storage(WIFI_STORAGE_RAM) );
+    ESP_ERROR_CHECK( esp_wifi_set_mode(ESPNOW_WIFI_MODE) );  //WIFI_MODE_APSTA
+    ESP_ERROR_CHECK( esp_wifi_start());
+    ESP_ERROR_CHECK( esp_wifi_set_channel(CONFIG_ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE));
+
+#if CONFIG_ESPNOW_ENABLE_LONG_RANGE
+    ESP_ERROR_CHECK( esp_wifi_set_protocol(ESPNOW_WIFI_IF, WIFI_PROTOCOL_11B|WIFI_PROTOCOL_11G|WIFI_PROTOCOL_11N|WIFI_PROTOCOL_LR) );
+#endif
+}
+
+// static esp_err_t example_espnow_init(void)
+// {
+//     example_espnow_send_param_t *send_param;
+
+//     s_vscp_espnow_queue = xQueueCreate(ESPNOW_QUEUE_SIZE, sizeof(example_espnow_event_t));
+//     if (s_vscp_espnow_queue == NULL) {
+//         ESP_LOGE(TAG, "Create mutex fail");
+//         return ESP_FAIL;
+//     }
+
+//     /* Initialize ESPNOW and register sending and receiving callback function. */
+//     ESP_ERROR_CHECK( esp_now_init() );
+//     ESP_ERROR_CHECK( esp_now_register_send_cb(vscp_espnow_send_cb) );
+//     ESP_ERROR_CHECK( esp_now_register_recv_cb(vscp_espnow_recv_cb) );
+// #if CONFIG_ESP_WIFI_STA_DISCONNECTED_PM_ENABLE
+//     ESP_ERROR_CHECK( esp_now_set_wake_window(65535) );
+// #endif
+//     /* Set primary master key. */
+//     ESP_ERROR_CHECK( esp_now_set_pmk((uint8_t *)CONFIG_ESPNOW_PMK) );
+
+//     /* Add broadcast peer information to peer list. */
+//     esp_now_peer_info_t *peer = malloc(sizeof(esp_now_peer_info_t));
+//     if (peer == NULL) {
+//         ESP_LOGE(TAG, "Malloc peer information fail");
+//         vSemaphoreDelete(s_vscp_espnow_queue);
+//         esp_now_deinit();
+//         return ESP_FAIL;
+//     }
+//     memset(peer, 0, sizeof(esp_now_peer_info_t));
+//     peer->channel = CONFIG_ESPNOW_CHANNEL;
+//     peer->ifidx = ESPNOW_WIFI_IF;
+//     peer->encrypt = false;
+//     memcpy(peer->peer_addr, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN);
+//     ESP_ERROR_CHECK( esp_now_add_peer(peer) );
+//     free(peer);
+
+//     /* Initialize sending parameters. */
+//     send_param = malloc(sizeof(example_espnow_send_param_t));
+//     if (send_param == NULL) {
+//         ESP_LOGE(TAG, "Malloc send parameter fail");
+//         vSemaphoreDelete(s_vscp_espnow_queue);
+//         esp_now_deinit();
+//         return ESP_FAIL;
+//     }
+//     memset(send_param, 0, sizeof(example_espnow_send_param_t));
+//     send_param->unicast = false;
+//     send_param->broadcast = true;
+//     send_param->state = 0;
+//     send_param->magic = esp_random();
+//     send_param->count = 10000;
+//     send_param->delay = 1;
+//     send_param->len = 100;
+//     send_param->buffer = malloc(100);
+//     if (send_param->buffer == NULL) {
+//         ESP_LOGE(TAG, "Malloc send buffer fail");
+//         free(send_param);
+//         vSemaphoreDelete(s_vscp_espnow_queue);
+//         esp_now_deinit();
+//         return ESP_FAIL;
+//     }
+//     memcpy(send_param->dest_mac, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN);
+//     example_espnow_data_prepare(send_param);
+
+//     //xTaskCreate(example_espnow_task, "example_espnow_task", 2048, send_param, 4, NULL);
+
+//     return ESP_OK;
+// }
+
+
+
+
+///////////////////////////////////////////////////////////////////////////////
 // app_main
 //
 
 void
 app_main(void)
-{
-  // static uint8_t uid[33];
-  ESP_LOGI(TAG, "App Main");
-
+{  
   // Initialize NVS partition
   esp_err_t rv = nvs_flash_init();
   if (rv == ESP_ERR_NVS_NO_FREE_PAGES || rv == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -773,10 +1132,10 @@ app_main(void)
   //esp_timer_start_periodic();
 
   // Initialize TCP/IP
-  ESP_ERROR_CHECK(esp_netif_init());
+  //ESP_ERROR_CHECK(esp_netif_init());
 
   // Initialize the event loop
-  ESP_ERROR_CHECK(esp_event_loop_create_default());
+  //ESP_ERROR_CHECK(esp_event_loop_create_default());
   wifi_event_group = xEventGroupCreate();
 
   gpio_config_t io_conf = {};
@@ -915,23 +1274,23 @@ app_main(void)
 
   g_ctrl_task_sem = xSemaphoreCreateBinary();
 
-  // Register our event handler for Wi-Fi, IP and Provisioning related events
-  ESP_ERROR_CHECK(esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
-  ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
-  ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
-
-  ESP_LOGI(TAG, "default wifi sta");
-
-  // ESP_ERROR_CHECK(esp_netif_init());
-  // ESP_ERROR_CHECK(esp_event_loop_create_default());
+   ESP_ERROR_CHECK(esp_netif_init());
+  ESP_ERROR_CHECK(esp_event_loop_create_default());
+  wifi_event_group = xEventGroupCreate();
+/*
+  //esp_netif_create_default_wifi_sta();
 
   // Start up with default
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&cfg));
   ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
-  esp_netif_create_default_wifi_sta();
+  ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_STA) );  // WIFI_MODE_APSTA */
 
-  ESP_LOGI(TAG, "wifi initializated");
+  
+  
+  //esp_netif_create_default_wifi_ap();  
+
+  
 
   // Do wifi provisioning if needed
 
@@ -939,9 +1298,9 @@ app_main(void)
   esp_netif_create_default_wifi_ap();
 #endif // CONFIG_PROV_TRANSPORT_SOFTAP
 
-  if (!wifi_provisioning()) {
+  if (1 /*!wifi_provisioning()*/) {
 
-    ESP_LOGI(TAG, "Already provisioned, starting Wi-Fi STA");
+    ESP_LOGI(TAG, "Already provisioned, starting Wi-Fi");
 
     /*
      * We don't need the manager as device is already provisioned,
@@ -951,26 +1310,51 @@ app_main(void)
 
     ESP_LOGI(TAG, "wifi_prov_mgr_deinit");
 
-    wifi_init_sta();
-    ESP_LOGI(TAG, "wifi init");
+    //ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_LOGI(TAG, "wifi init A");
+    //ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_LOGI(TAG, "wifi init B");
+    //esp_wifi_set_channel(11, 0);
+    ESP_LOGI(TAG, "wifi init C");
+
+    //ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA)); // WIFI_MODE_APSTA
+    //ESP_ERROR_CHECK(esp_wifi_start());
+    //esp_wifi_set_channel(11, 0);
+    example_wifi_init();
+
+    ESP_LOGI(TAG, "wifi initializated");
+
+    // Register our event handler for Wi-Fi, IP and Provisioning related events
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
   }
 
   /* Wait for Wi-Fi connection */
-  xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, false, true, portMAX_DELAY);
+  //xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, false, true, portMAX_DELAY);
+
+
+  // Initialize espnow
+  if (ESP_OK != vscp_espnow_init()) {
+    ESP_LOGI(TAG, "Failed to initialize espnow");
+  }  
+
+  ESP_LOGI(TAG, "espnow initializated");
 
   // Start LED controlling tast
-  xTaskCreate(&led_task, "led_task", 1024, NULL, 5, NULL);
+  //xTaskCreate(&led_task, "led_task", 1024, NULL, 5, NULL);
 
   // Start heartbeat task vscp_heartbeat_task
   xTaskCreate(&vscp_heartbeat_task, "vscp_heartbeat_task", 2024, NULL, 5, NULL);
 
-  // Initialize espnow
-  vscp_espnow_init();
+  xTaskCreate(vscp_espnow_send_task, "vscp_espnow_send_task", 4096, NULL, 4, NULL);
+  xTaskCreate(vscp_espnow_recv_task, "vscp_espnow_recv_task", 2048, NULL, 4, NULL);
+  //xTaskCreate(vscp_work_task, "vscp_work_task", 4096, NULL, 4, NULL);
+
+  //xTaskCreate(&tcpsrv_task, "vscp_tcpsrv_task", 2024, NULL, 5, NULL);
 
   // Start web server
-  httpd_handle_t server = start_webserver();
-
-  xTaskCreate(&tcpsrv_task, "vscp_tcpsrv_task", 2024, NULL, 5, NULL);
+  //httpd_handle_t server = start_webserver();
 
   ESP_LOGI(TAG, "Going to work now!");
 
@@ -981,11 +1365,13 @@ app_main(void)
   while (1) {
     // esp_task_wdt_reset();
     ESP_LOGI(TAG, "Ctrl - Loop");
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    vTaskDelay(10000 / portTICK_PERIOD_MS);
   }
+
+  
 
   // Clean up
 
   // Close
-  nvs_close(g_nvsHandle);
+  //nvs_close(g_nvsHandle);
 }
