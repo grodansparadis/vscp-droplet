@@ -53,6 +53,131 @@
 
 static const char *TAG = "espnow_alpha wifiprov";
 
+///////////////////////////////////////////////////////////////////////////////
+// wifi_prov_print_qr
+//
+
+void
+wifi_prov_print_qr(const char *name, const char *username, const char *pop, const char *transport)
+{
+  if (!name || !transport) {
+    ESP_LOGW(TAG, "Cannot generate QR code payload. Data missing.");
+    return;
+  }
+  char payload[150] = { 0 };
+  if (pop) {
+#if CONFIG_PROV_SECURITY_VERSION_1
+    snprintf(payload,
+             sizeof(payload),
+             "{\"ver\":\"%s\",\"name\":\"%s\""
+             ",\"pop\":\"%s\",\"transport\":\"%s\"}",
+             PROV_QR_VERSION,
+             name,
+             pop,
+             transport);
+#elif CONFIG_PROV_SECURITY_VERSION_2
+    snprintf(payload,
+             sizeof(payload),
+             "{\"ver\":\"%s\",\"name\":\"%s\""
+             ",\"username\":\"%s\",\"pop\":\"%s\",\"transport\":\"%s\"}",
+             PROV_QR_VERSION,
+             name,
+             username,
+             pop,
+             transport);
+#endif
+  }
+  else {
+    snprintf(payload,
+             sizeof(payload),
+             "{\"ver\":\"%s\",\"name\":\"%s\""
+             ",\"transport\":\"%s\"}",
+             PROV_QR_VERSION,
+             name,
+             transport);
+  }
+#ifdef CONFIG_PROV_SHOW_QR
+  ESP_LOGI(TAG, "Scan this QR code from the provisioning application for Provisioning.");
+  esp_qrcode_config_t cfg = ESP_QRCODE_CONFIG_DEFAULT();
+  esp_qrcode_generate(&cfg, payload);
+#endif /* CONFIG_APP_WIFI_PROV_SHOW_QR */
+  ESP_LOGI(TAG,
+           "If QR code is not visible, copy paste the below URL in a "
+           "browser.\n%s?data=%s",
+           QRCODE_BASE_URL,
+           payload);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// custom_prov_data_handler
+//
+// Handler for the optional provisioning endpoint registered by the application.
+// The data format can be chosen by applications. Here, we are using plain ascii
+// text. Applications can choose to use other formats like protobuf, JSON, XML,
+// etc.
+//
+
+
+
+esp_err_t
+custom_prov_data_handler(uint32_t session_id,
+                         const uint8_t *inbuf,
+                         ssize_t inlen,
+                         uint8_t **outbuf,
+                         ssize_t *outlen,
+                         void *priv_data)
+{
+  if (inbuf) {
+    ESP_LOGI(TAG, "Received data: %.*s", inlen, (char *) inbuf);
+  }
+
+  char response[] = "SUCCESS";
+  *outbuf         = (uint8_t *) strdup(response);
+
+  if (*outbuf == NULL) {
+    ESP_LOGE(TAG, "System out of memory");
+    return ESP_ERR_NO_MEM;
+  }
+
+  *outlen = strlen(response) + 1; /* +1 for NULL terminating byte */
+
+  return ESP_OK;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_data_prepare
+//
+// Prepare ESPNOW data to be sent. 
+//
+
+// void vscp_espnow_data_prepare(vscp_espnow_data_t *send_param)
+// {
+//     vscp_espnow_send_param_t *buf = (vscp_espnow_send_param_t *)send_param->buffer;
+//     assert(send_param->len >= sizeof(vscp_espnow_send_param_t));
+
+//     buf->type = IS_BROADCAST_ADDR(send_param->dest_mac) ? EXAMPLE_ESPNOW_DATA_BROADCAST : EXAMPLE_ESPNOW_DATA_UNICAST;
+//     buf->state = send_param->state;
+//     buf->seq_num = s_vscp_espnow_seq[buf->type]++;
+//     buf->crc = 0;
+//     buf->magic = send_param->magic;
+//     // Fill all remaining bytes after the data with random values 
+//     esp_fill_random(buf->payload, send_param->len - sizeof(vscp_espnow_send_param_t));
+//     buf->crc = esp_crc16_le(UINT16_MAX, (uint8_t const *)buf, send_param->len);
+// }
+
+///////////////////////////////////////////////////////////////////////////////
+// get_device_service_name
+//
+
+void
+get_device_service_name(char *service_name, size_t max)
+{
+  uint8_t eth_mac[6];
+  const char *ssid_prefix = "PROV_";
+  esp_wifi_get_mac(WIFI_IF_STA, eth_mac);
+  snprintf(service_name, max, "%s%02X%02X%02X", ssid_prefix, eth_mac[3], eth_mac[4], eth_mac[5]);
+}
+
 // --------------------------------------------------------
 //                      Provisioning
 // --------------------------------------------------------
@@ -140,7 +265,7 @@ get_sec2_verifier(const char **verifier, uint16_t *verifier_len)
 
 bool wifi_provisioning(void)
 {
-  ESP_LOGI(TAG, "wifi provisioning");
+  ESP_LOGI(TAG, "wifi provisioning started");
 
   // Configuration for the provisioning manager
   wifi_prov_mgr_config_t config = {
@@ -165,7 +290,13 @@ bool wifi_provisioning(void)
    * to take care of this automatically. This can be set to
    * WIFI_PROV_EVENT_HANDLER_NONE when using wifi_prov_scheme_softap
    */
+#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_BLE  
     .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM
+#endif /* CONFIG_EXAMPLE_PROV_TRANSPORT_BLE */    
+#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
+        .scheme_event_handler = WIFI_PROV_EVENT_HANDLER_NONE
+#endif /* CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP */
+
   };
 
   /*
@@ -177,25 +308,29 @@ bool wifi_provisioning(void)
   ESP_LOGI(TAG, "Provision initiated");
 
   bool provisioned = false;
+
 #ifdef CONFIG_RESET_PROVISIONED
   wifi_prov_mgr_reset_provisioning();
 #else
-
   // Let's find out if the device is provisioned 
   ESP_ERROR_CHECK(wifi_prov_mgr_is_provisioned(&provisioned));
-
-  ESP_LOGI(TAG, "----------------------> %d", (provisioned ? 1 : 0));
-
 #endif
 
   // If device is not yet provisioned start provisioning service 
   if (provisioned) {
+    
     ESP_LOGI(TAG, "Already provisioned");
+    
+    /* We don't need the manager as device is already provisioned,
+     * so let's release it's resources 
+     */
+    wifi_prov_mgr_deinit();
+
     return false;
   }
   else {
 
-    ESP_LOGI(TAG, "Starting provisioning");
+    ESP_LOGI(TAG, "Provisioning process...");
 
     /*
      * What is the Device Service Name that we want
@@ -225,7 +360,7 @@ bool wifi_provisioning(void)
      *   - this should be a string with length > 0
      *   - NULL if not used
      */
-    const char *pop = "VSCP-Dropplet-Alpha";
+    const char *pop = "CONFIG_ESPNOW_SESSION_POP; // espnow_pop";
     /*
      * If the pop is allocated dynamically, then it should be valid till
      * the provisioning process is running.
@@ -299,6 +434,7 @@ bool wifi_provisioning(void)
      * User Characteristic Description descriptor (0x2901) for each
      * characteristic, which contains the endpoint name of the characteristic
      */
+    
     uint8_t custom_service_uuid[] = {
       /*
        * LSB <---------------------------------------
@@ -321,9 +457,9 @@ bool wifi_provisioning(void)
      * The endpoint name can be anything of your choice.
      * This call must be made before starting the provisioning.
      */
-    wifi_prov_mgr_endpoint_create("ESPNOW-ALPHA");
+    wifi_prov_mgr_endpoint_create("custom-data");
 
-    /* Start provisioning service */
+    // Start provisioning service 
     ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(security, (const void *)sec_params, service_name, service_key));
 
     /*
@@ -331,7 +467,7 @@ bool wifi_provisioning(void)
      * This call must be made after starting the provisioning, and only if the
      * endpoint has already been created above.
      */
-    wifi_prov_mgr_endpoint_register("ESPNOW-ALPHA", custom_prov_data_handler, NULL);
+    wifi_prov_mgr_endpoint_register("custom-data", custom_prov_data_handler, NULL);    
 
     /*
      * Uncomment the following to wait for the provisioning to finish and then
@@ -339,8 +475,8 @@ bool wifi_provisioning(void)
      * de-initialization is triggered by the default event loop handler, we
      * don't need to call the following
      */
-    wifi_prov_mgr_wait();
-    wifi_prov_mgr_deinit();
+    // wifi_prov_mgr_wait();
+    // wifi_prov_mgr_deinit();
 
     /* Print QR code for provisioning */
 #ifdef CONFIG_PROV_TRANSPORT_BLE
@@ -348,6 +484,8 @@ bool wifi_provisioning(void)
 #else  // CONFIG_PROV_TRANSPORT_SOFTAP
     wifi_prov_print_qr(service_name, username, pop, PROV_TRANSPORT_SOFTAP);
 #endif // CONFIG_PROV_TRANSPORT_BLE 
+    
+    
   }
   
   return true;

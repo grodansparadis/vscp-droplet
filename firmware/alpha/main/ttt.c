@@ -662,3 +662,121 @@ vscpEventToEspNowBuf(uint8_t *buf, uint8_t len, vscp_espnow_event_t *pvscpEspNow
   //crc = esp_crc16_le(UINT16_MAX, (uint8_t const *)buf, VSCP_ESPNOW_PACKET_MIN_SIZE - 2 + pex->sizeData);
   //buf[VSCP_ESPNOW_PACKET_MIN_SIZE - 2] = (crc >> 8) & 0xff;
   //buf[VSCP_ESPNOW_PACKET_MIN_SIZE + 1 - 2] = crc & 0xff;
+
+
+  ///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_send_cb
+//
+// ESPNOW sending or receiving callback function is called in WiFi task.
+// Users should not do lengthy operations from this task. Instead, post
+// necessary data to a queue and handle it from a lower priority task.
+//
+
+// static void
+// vscp_espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status)
+// {
+//   vscp_espnow_event_post_t evt;
+//   vscp_espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
+
+//   //ESP_LOGI(TAG, "---------------------> vscp_espnow_send_cb ");
+
+//   if (mac_addr == NULL) {
+//     ESP_LOGE(TAG, "Send cb arg error");
+//     return;
+//   }
+
+//   g_send_state.state = VSCP_SEND_STATE_SEND_CONFIRM;
+//   g_send_state.timestamp = esp_timer_get_time();
+
+//   evt.id = VSCP_ESPNOW_SEND_EVT;
+//   memcpy(send_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
+//   send_cb->status = status;
+//   //Put status on event queue
+//   if (xQueueSend(s_vscp_espnow_queue, &evt, ESPNOW_MAXDELAY) != pdTRUE) {
+//     ESP_LOGW(TAG, "Add to event queue failed");
+//   }
+// }
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_espnow_recv_cb
+//
+
+// static void
+// vscp_espnow_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
+// {
+
+//   vscp_espnow_event_post_t evt;
+//   vscp_espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
+
+//   //ESP_LOGI(TAG, "                         --------> espnow-x recv cb");
+
+//   if (mac_addr == NULL || data == NULL || len <= 0) {
+//     ESP_LOGE(TAG, "Receive cb arg error");
+//     return;
+//   }
+
+//   evt.id = VSCP_ESPNOW_RECV_EVT;
+//   memcpy(recv_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
+//   memcpy(recv_cb->buf, data, len);
+//   recv_cb->len = len;
+//   // Put message + status on event queue
+//   if (xQueueSend(s_vscp_espnow_queue, &evt, ESPNOW_MAXDELAY) != pdTRUE) {
+//     ESP_LOGW(TAG, "Send receive queue fail");
+//   }
+// }
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_work_task
+//
+
+// static void
+// vscp_work_task(void *pvParameter)
+// {
+//   vscp_espnow_event_post_t evt;
+//   esp_err_t ret;
+//   uint8_t dest_mac[ESP_NOW_ETH_ALEN]; // MAC address of destination device.
+//   vscp_espnow_event_t vscpEspNowEvent;
+//   int cnt = 0;
+
+//   for (;;) { 
+
+//     ret = xQueueReceive(s_vscp_espnow_queue, &evt, (1000 / portTICK_RATE_MS));
+
+//     esp_task_wdt_reset();
+//     //ESP_LOGI(TAG,"HoHo");
+//     if (ret != pdTRUE) continue;
+
+//     //ESP_LOGI(TAG,"==============================> Event: %d", evt.id);
+
+//     switch (evt.id) {
+
+//       case VSCP_ESPNOW_SEND_EVT: {
+
+//         g_send_state.state = VSCP_SEND_STATE_NONE;
+//         g_send_state.timestamp = esp_timer_get_time();
+
+//         vscp_espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
+//         bool is_broadcast = IS_BROADCAST_ADDR(send_cb->mac_addr);
+
+//         ESP_LOGI(TAG,
+//                  "-->> %d to " MACSTR ", status: %d",
+//                  cnt++,
+//                  MAC2STR(send_cb->mac_addr),
+//                  send_cb->status);
+
+//         break;
+//       }
+
+//       case VSCP_ESPNOW_RECV_EVT: {
+//         ESP_LOGI(TAG, "Receive: %d", evt.id);
+//         break;
+//       } // receive
+
+//       default:
+//         ESP_LOGE(TAG, "Callback type error: %d", evt.id);
+//         break;
+//     }
+//   }
+
+//   ESP_LOGE(TAG, "The end");
+// }

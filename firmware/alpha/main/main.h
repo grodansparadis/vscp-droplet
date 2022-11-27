@@ -98,7 +98,7 @@ typedef struct {
 #define DEFAULT_TCPIP_PASSWORD    "secret"
 #define DEFAULT_TCPIP_VER         4       // Ipv6 = 6 or Ipv4 = 4
 #define TCPSRV_WELCOME_MSG        "Welcome to the Wireless CAN4VSCP Gateway\r\n"                    \
-                                  "Copyright (C) 2000-2022 Grodans Paradis AB\r\n"                  \
+                                  "Copyright (C) 2000-2022 Åke Hedman, Grodans Paradis AB\r\n"      \
                                   "https://www.grodansparadis.com\r\n"                              \
                                   "+OK\r\n"
 
@@ -189,7 +189,7 @@ typedef struct {
   uint16_t crc;                         // CRC16 value of ESPNOW data.
   uint32_t magic;                       // Magic number.
   uint8_t payload[0];                   // Real payload of ESPNOW data.
-} __attribute__((packed)) espnow_data_t;
+} __attribute__((packed)) vscp_espnow_data_t;
 
 /**
  * Parameters of sending ESPNOW data. 
@@ -204,7 +204,7 @@ typedef struct {
   int len;                              // Length of ESPNOW data to be sent, unit: byte.
   uint8_t *buffer;                      // Buffer pointing to ESPNOW data.
   uint8_t dest_mac[ESP_NOW_ETH_ALEN];   // MAC address of destination device.
-} espnow_send_param_t;
+} vscp_espnow_send_param_t;
 
 
 // ***
