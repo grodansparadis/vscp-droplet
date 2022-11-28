@@ -41,13 +41,15 @@
 #include "iot_button.h"
 #include <driver/gpio.h>
 
-#include <esp_event.h>
-#include <esp_task_wdt.h>
 #include "esp_crc.h"
+#include "esp_http_client.h"
+#include "esp_https_ota.h"
 #include "esp_now.h"
+#include <esp_event.h>
 #include <esp_http_server.h>
 #include <esp_log.h>
 #include <esp_mac.h>
+#include <esp_ota_ops.h>
 #include <esp_task_wdt.h>
 #include <esp_timer.h>
 #include <esp_tls_crypto.h>
@@ -58,19 +60,10 @@
 #include <esp_utils.h>
 #include <lwip/sockets.h>
 
+#include "espnow_ota.h"
 #include <espnow.h>
 #include <espnow_ctrl.h>
 #include <espnow_security.h>
-
-#ifdef CONFIG_PROV_TRANSPORT_BLE
-#include <wifi_provisioning/scheme_ble.h> 
-#endif /* CONFIG_PROV_TRANSPORT_BLE */
-
-#ifdef CONFIG_PROV_TRANSPORT_SOFTAP
-#include <wifi_provisioning/scheme_softap.h>
-#endif /* CONFIG_PROV_TRANSPORT_SOFTAP */
-
-// #include "qrcode.h"
 
 #include "websrv.h"
 
@@ -84,28 +77,44 @@
 #include "main.h"
 #include "wifiprov.h"
 
+#ifdef CONFIG_PROV_TRANSPORT_BLE
+#include <wifi_provisioning/scheme_ble.h>
+#endif /* CONFIG_PROV_TRANSPORT_BLE */
+
+#ifdef CONFIG_PROV_TRANSPORT_SOFTAP
+#include <wifi_provisioning/scheme_softap.h>
+#endif /* CONFIG_PROV_TRANSPORT_SOFTAP */
+
 const char *pop_data   = "ESPNOW_VSCP_ALPHA";
 static const char *TAG = "espnow_alpha";
+
+#define HASH_LEN 32
+
+extern const uint8_t server_cert_pem_start[] asm("_binary_ca_cert_pem_start");
+extern const uint8_t server_cert_pem_end[] asm("_binary_ca_cert_pem_end");
 
 // Handle for nvs storage
 nvs_handle_t g_nvsHandle;
 
-
+// Key transfer handler
+espnow_sec_t *g_sec;
 
 // This mutex protects the espnow_send as it is NOT thread safe
 static SemaphoreHandle_t g_send_lock;
 
 // Transports
 transport_t g_tr_tcpsrv[MAX_TCP_CONNECTIONS] = {};
-transport_t g_tr_mqtt      = {}; // MQTT
+transport_t g_tr_mqtt                        = {}; // MQTT
 
-static void vscp_heartbeat_task(void *pvParameter);
-static void vscp_espnow_send_task(void *pvParameter);
+static void
+vscp_heartbeat_task(void *pvParameter);
+static void
+vscp_espnow_send_task(void *pvParameter);
 
 enum {
   VSCP_SEND_STATE_NONE,
-  VSCP_SEND_STATE_SENT,         // Event has been sent, no other events can be sent
-  VSCP_SEND_STATE_SEND_CONFIRM  // Event send has been confirmed
+  VSCP_SEND_STATE_SENT,        // Event has been sent, no other events can be sent
+  VSCP_SEND_STATE_SEND_CONFIRM // Event send has been confirmed
 };
 
 typedef struct __state__ {
@@ -113,46 +122,43 @@ typedef struct __state__ {
   uint64_t timestamp; // Time when state was set
 } vscp_send_state_t;
 
-static vscp_send_state_t g_send_state = {VSCP_SEND_STATE_NONE, 0};
+static vscp_send_state_t g_send_state = { VSCP_SEND_STATE_NONE, 0 };
 
 //----------------------------------------------------------
 typedef enum {
-    EXAMPLE_ESPNOW_SEND_CB,
-    EXAMPLE_ESPNOW_RECV_CB,
+  EXAMPLE_ESPNOW_SEND_CB,
+  EXAMPLE_ESPNOW_RECV_CB,
 } example_espnow_event_id_t;
 
 typedef struct {
-    uint8_t mac_addr[ESP_NOW_ETH_ALEN];
-    esp_now_send_status_t status;
+  uint8_t mac_addr[ESP_NOW_ETH_ALEN];
+  esp_now_send_status_t status;
 } example_espnow_event_send_cb_t;
 
 typedef struct {
-    uint8_t mac_addr[ESP_NOW_ETH_ALEN];
-    uint8_t *data;
-    int data_len;
+  uint8_t mac_addr[ESP_NOW_ETH_ALEN];
+  uint8_t *data;
+  int data_len;
 } example_espnow_event_recv_cb_t;
 
 typedef union {
-    example_espnow_event_send_cb_t send_cb;
-    example_espnow_event_recv_cb_t recv_cb;
+  example_espnow_event_send_cb_t send_cb;
+  example_espnow_event_recv_cb_t recv_cb;
 } example_espnow_event_info_t;
 
 /* When ESPNOW sending or receiving callback function is called, post event to ESPNOW task. */
 typedef struct {
-    example_espnow_event_id_t id;
-    example_espnow_event_info_t info;
+  example_espnow_event_id_t id;
+  example_espnow_event_info_t info;
 } example_espnow_event_t;
 
 enum {
-    EXAMPLE_ESPNOW_DATA_BROADCAST,
-    EXAMPLE_ESPNOW_DATA_UNICAST,
-    EXAMPLE_ESPNOW_DATA_MAX,
+  EXAMPLE_ESPNOW_DATA_BROADCAST,
+  EXAMPLE_ESPNOW_DATA_UNICAST,
+  EXAMPLE_ESPNOW_DATA_MAX,
 };
 
-
-
 //----------------------------------------------------------
-
 
 ///////////////////////////////////////////////////////////
 //                      V S C P
@@ -160,7 +166,6 @@ enum {
 
 // GUID for unit
 uint8_t g_node_guid[16]; // Ful GUID for node
-
 
 // ESP-NOW
 SemaphoreHandle_t g_ctrl_task_sem;
@@ -184,10 +189,7 @@ static xQueueHandle s_vscp_espnow_queue; // espnow send/receive queue
 
 static uint8_t s_vscp_broadcast_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 static uint8_t s_vscp_own_mac[ESP_NOW_ETH_ALEN]       = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
-static uint16_t s_vscp_espnow_seq[ESPNOW_DATA_MAX] = { 0, 0 };
-
-// Provisioning state
-static espnow_ctrl_status_t s_espnow_ctrl_prov_state = ESPNOW_CTRL_INIT;
+static uint16_t s_vscp_espnow_seq[ESPNOW_DATA_MAX]    = { 0, 0 };
 
 espnow_sec_t *g_sec; // espnow security structure
 
@@ -199,15 +201,342 @@ vscp_espnow_deinit(void *param);
 const int WIFI_CONNECTED_EVENT = BIT0;
 static EventGroupHandle_t wifi_event_group;
 
+//-----------------------------------------------------------------------------
+//                                    OTA
+//-----------------------------------------------------------------------------
 
+#define OTA_URL_SIZE 256
 
+///////////////////////////////////////////////////////////////////////////////
+// _http_event_handler
+//
+
+esp_err_t
+_http_event_handler(esp_http_client_event_t *evt)
+{
+  switch (evt->event_id) {
+    case HTTP_EVENT_ERROR:
+      ESP_LOGD(TAG, "HTTP_EVENT_ERROR");
+      break;
+    case HTTP_EVENT_ON_CONNECTED:
+      ESP_LOGD(TAG, "HTTP_EVENT_ON_CONNECTED");
+      break;
+    case HTTP_EVENT_HEADER_SENT:
+      ESP_LOGD(TAG, "HTTP_EVENT_HEADER_SENT");
+      break;
+    case HTTP_EVENT_ON_HEADER:
+      ESP_LOGD(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
+      break;
+    case HTTP_EVENT_ON_DATA:
+      ESP_LOGD(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
+      break;
+    case HTTP_EVENT_ON_FINISH:
+      ESP_LOGD(TAG, "HTTP_EVENT_ON_FINISH");
+      break;
+    case HTTP_EVENT_DISCONNECTED:
+      ESP_LOGD(TAG, "HTTP_EVENT_DISCONNECTED");
+      break;
+  }
+  return ESP_OK;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// ota_task
+//
+
+void
+ota_task(void *pvParameter)
+{
+  ESP_LOGI(TAG, "Starting OTA example");
+#ifdef CONFIG_EXAMPLE_FIRMWARE_UPGRADE_BIND_IF
+  esp_netif_t *netif = get_example_netif_from_desc(bind_interface_name);
+  if (netif == NULL) {
+    ESP_LOGE(TAG, "Can't find netif from interface description");
+    abort();
+  }
+  struct ifreq ifr;
+  esp_netif_get_netif_impl_name(netif, ifr.ifr_name);
+  ESP_LOGI(TAG, "Bind interface name is %s", ifr.ifr_name);
+#endif
+  esp_http_client_config_t config = {
+    .url               = CONFIG_FIRMWARE_UPGRADE_URL,
+    .cert_pem          = (char *) server_cert_pem_start,
+    .event_handler     = _http_event_handler,
+    .keep_alive_enable = true,
+#ifdef CONFIG_EXAMPLE_FIRMWARE_UPGRADE_BIND_IF
+    .if_name = &ifr,
+#endif
+  };
+
+#ifdef CONFIG_EXAMPLE_SKIP_COMMON_NAME_CHECK
+  config.skip_cert_common_name_check = true;
+#endif
+
+  esp_err_t ret = esp_https_ota(&config);
+  if (ret == ESP_OK) {
+    esp_restart();
+  }
+  else {
+    ESP_LOGE(TAG, "Firmware upgrade failed");
+  }
+  while (1) {
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// print_sha256
+//
+
+static void
+print_sha256(const uint8_t *image_hash, const char *label)
+{
+  char hash_print[HASH_LEN * 2 + 1];
+  hash_print[HASH_LEN * 2] = 0;
+  for (int i = 0; i < HASH_LEN; ++i) {
+    sprintf(&hash_print[i * 2], "%02x", image_hash[i]);
+  }
+  ESP_LOGI(TAG, "%s %s", label, hash_print);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// get_sha256_of_partitions
+//
+
+static void
+get_sha256_of_partitions(void)
+{
+  uint8_t sha_256[HASH_LEN] = { 0 };
+  esp_partition_t partition;
+
+  // get sha256 digest for bootloader
+  partition.address = ESP_BOOTLOADER_OFFSET;
+  partition.size    = ESP_PARTITION_TABLE_OFFSET;
+  partition.type    = ESP_PARTITION_TYPE_APP;
+  esp_partition_get_sha256(&partition, sha_256);
+  print_sha256(sha_256, "SHA-256 for bootloader: ");
+
+  // get sha256 digest for running partition
+  esp_partition_get_sha256(esp_ota_get_running_partition(), sha_256);
+  print_sha256(sha_256, "SHA-256 for current firmware: ");
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// startOTA
+//
+
+void startOTA()
+{
+  xTaskCreate(&ota_task, "ota_task", 8192, NULL, 5, NULL);
+}
+
+//-----------------------------------------------------------------------------
+//                                   espnow OTA
+//-----------------------------------------------------------------------------
+
+///////////////////////////////////////////////////////////////////////////////
+// firmware_download
+//
+
+static size_t
+firmware_download(const char *url)
+{
+#define OTA_DATA_PAYLOAD_LEN 1024
+
+  esp_err_t ret               = ESP_OK;
+  esp_ota_handle_t ota_handle = 0;
+  uint8_t *data               = ESP_MALLOC(OTA_DATA_PAYLOAD_LEN);
+  size_t total_size           = 0;
+  uint32_t start_time         = xTaskGetTickCount();
+
+  esp_http_client_config_t config = {
+    .url            = url,
+    .transport_type = HTTP_TRANSPORT_UNKNOWN,
+  };
+
+  /**
+   * @brief 1. Connect to the server
+   */
+  esp_http_client_handle_t client = esp_http_client_init(&config);
+  ESP_ERROR_GOTO(!client, EXIT, "Initialise HTTP connection");
+
+  ESP_LOGI(TAG, "Open HTTP connection: %s", url);
+
+  /**
+   * @brief First, the firmware is obtained from the http server and stored
+   */
+  do {
+    ret = esp_http_client_open(client, 0);
+
+    if (ret != ESP_OK) {
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      ESP_LOGW(TAG, "<%s> Connection service failed", esp_err_to_name(ret));
+    }
+  } while (ret != ESP_OK);
+
+  total_size = esp_http_client_fetch_headers(client);
+
+  if (total_size <= 0) {
+    ESP_LOGW(TAG, "Please check the address of the server");
+    ret = esp_http_client_read(client, (char *) data, OTA_DATA_PAYLOAD_LEN);
+    ESP_ERROR_GOTO(ret < 0, EXIT, "<%s> Read data from http stream", esp_err_to_name(ret));
+
+    ESP_LOGW(TAG, "Recv data: %.*s", ret, data);
+    goto EXIT;
+  }
+
+  /**
+   * @brief 2. Read firmware from the server and write it to the flash of the root node
+   */
+
+  const esp_partition_t *updata_partition = esp_ota_get_next_update_partition(NULL);
+  /**< Commence an OTA update writing to the specified partition. */
+  ret = esp_ota_begin(updata_partition, total_size, &ota_handle);
+  ESP_ERROR_GOTO(ret != ESP_OK, EXIT, "<%s> esp_ota_begin failed, total_size", esp_err_to_name(ret));
+
+  for (ssize_t size = 0, recv_size = 0; recv_size < total_size; recv_size += size) {
+    size = esp_http_client_read(client, (char *) data, OTA_DATA_PAYLOAD_LEN);
+    ESP_ERROR_GOTO(size < 0, EXIT, "<%s> Read data from http stream", esp_err_to_name(ret));
+
+    if (size > 0) {
+      /**< Write OTA update data to partition */
+      ret = esp_ota_write(ota_handle, data, OTA_DATA_PAYLOAD_LEN);
+      ESP_ERROR_GOTO(ret != ESP_OK,
+                     EXIT,
+                     "<%s> Write firmware to flash, size: %d, data: %.*s",
+                     esp_err_to_name(ret),
+                     size,
+                     size,
+                     data);
+    }
+    else {
+      ESP_LOGW(TAG, "<%s> esp_http_client_read", esp_err_to_name(ret));
+      goto EXIT;
+    }
+  }
+
+  ESP_LOGI(TAG,
+           "The service download firmware is complete, Spend time: %ds",
+           (xTaskGetTickCount() - start_time) * portTICK_RATE_MS / 1000);
+
+  ret = esp_ota_end(ota_handle);
+  ESP_ERROR_GOTO(ret != ESP_OK, EXIT, "<%s> esp_ota_end", esp_err_to_name(ret));
+
+EXIT:
+  ESP_FREE(data);
+  esp_http_client_close(client);
+  esp_http_client_cleanup(client);
+
+  return total_size;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// ota_initator_data_cb
+//
+
+esp_err_t
+ota_initator_data_cb(size_t src_offset, void *dst, size_t size)
+{
+  static const esp_partition_t *data_partition = NULL;
+
+  if (!data_partition) {
+    data_partition = esp_ota_get_next_update_partition(NULL);
+  }
+
+  return esp_partition_read(data_partition, src_offset, dst, size);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// firmware_send
+//
+
+static void
+firmware_send(size_t firmware_size, uint8_t sha[ESPNOW_OTA_HASH_LEN])
+{
+  esp_err_t ret                         = ESP_OK;
+  uint32_t start_time                   = xTaskGetTickCount();
+  espnow_ota_result_t espnow_ota_result = { 0 };
+  espnow_ota_responder_t *info_list     = NULL;
+  size_t num                            = 0;
+
+  espnow_ota_initator_scan(&info_list, &num, pdMS_TO_TICKS(3000));
+  ESP_LOGW(TAG, "espnow wait ota num: %d", num);
+
+  espnow_addr_t *dest_addr_list = ESP_MALLOC(num * ESPNOW_ADDR_LEN);
+
+  for (size_t i = 0; i < num; i++) {
+    memcpy(dest_addr_list[i], info_list[i].mac, ESPNOW_ADDR_LEN);
+  }
+
+  ESP_FREE(info_list);
+
+  ret = espnow_ota_initator_send(dest_addr_list, num, sha, firmware_size, ota_initator_data_cb, &espnow_ota_result);
+  ESP_ERROR_GOTO(ret != ESP_OK, EXIT, "<%s> espnow_ota_initator_send", esp_err_to_name(ret));
+
+  if (espnow_ota_result.successed_num == 0) {
+    ESP_LOGW(TAG, "Devices upgrade failed, unfinished_num: %d", espnow_ota_result.unfinished_num);
+    goto EXIT;
+  }
+
+  ESP_LOGI(TAG,
+           "Firmware is sent to the device to complete, Spend time: %ds",
+           (xTaskGetTickCount() - start_time) * portTICK_RATE_MS / 1000);
+  ESP_LOGI(TAG,
+           "Devices upgrade completed, successed_num: %d, unfinished_num: %d",
+           espnow_ota_result.successed_num,
+           espnow_ota_result.unfinished_num);
+
+EXIT:
+  espnow_ota_initator_result_free(&espnow_ota_result);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// initiateFirmwareUpload
+//
+
+int
+initiateFirmwareUpload(void)
+{
+  uint8_t sha_256[32]                   = { 0 };
+  const esp_partition_t *data_partition = esp_ota_get_next_update_partition(NULL);
+
+  size_t firmware_size = firmware_download(CONFIG_FIRMWARE_UPGRADE_URL);
+  esp_partition_get_sha256(data_partition, sha_256);
+
+  // Send new firmware to clients
+  firmware_send(firmware_size, sha_256);
+
+  return VSCP_ERROR_SUCCESS;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// respondToFirmwareUpload
+//
+
+int
+respondToFirmwareUpload(void)
+{
+  espnow_ota_config_t ota_config = {
+    .skip_version_check       = true,
+    .progress_report_interval = 10,
+  };
+
+  // Take care of firmware update of out node
+  espnow_ota_responder_start(&ota_config);
+
+  return VSCP_ERROR_SUCCESS;
+}
+
+// ----------------------------------------------------------------------------
+//                              espnow key exchange
+//-----------------------------------------------------------------------------
 
 ///////////////////////////////////////////////////////////////////////////////
 // security
 //
 
 void
-security(void)
+Initiate_security_key_transfer(void)
 {
   uint32_t start_time1                  = xTaskGetTickCount();
   espnow_sec_result_t espnow_sec_result = { 0 };
@@ -245,6 +574,15 @@ EXIT:
   ESP_FREE(dest_addr_list);
   espnow_sec_initator_result_free(&espnow_sec_result);
 }
+
+void
+respond_to_security_key_transfer(void)
+{
+  espnow_sec_responder_start(g_sec, pop_data);
+  ESP_LOGI(TAG, "<===============================>");
+}
+
+// ----------------------------------------------------------------------------
 
 ///////////////////////////////////////////////////////////////////////////////
 // read_onboard_temperature
@@ -360,7 +698,7 @@ event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *ev
         break;
 
       case WIFI_PROV_END:
-        // De-initialize manager once provisioning is finished 
+        // De-initialize manager once provisioning is finished
         wifi_prov_mgr_deinit();
         break;
 
@@ -387,9 +725,6 @@ event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *ev
     esp_wifi_connect();
   }
 }
-
-
-
 
 ///////////////////////////////////////////////////////////////////////////////
 // LED status task
@@ -435,18 +770,18 @@ vscp_heartbeat_task(void *pvParameter)
 
     vTaskDelay(VSCP_HEART_BEAT_INTERVAL / portTICK_RATE_MS);
 
-    //if (pthread_mutex_lock(&g_espnow_send_mutex) == 0){
-    if(xSemaphoreTake( g_send_lock, ( TickType_t ) 2 ) ) {
+    // if (pthread_mutex_lock(&g_espnow_send_mutex) == 0){
+    if (xSemaphoreTake(g_send_lock, (TickType_t) 2)) {
       ret = espnow_send(ESPNOW_TYPE_DATA, dest_mac, buf, size, &frame_head, portMAX_DELAY);
       ret = esp_now_send(dest_mac, buf, size);
       xSemaphoreGive(g_send_lock);
       uint32_t hf = esp_get_free_heap_size();
       heap_caps_check_integrity_all(true);
       ESP_LOGI(TAG, "---------> VSCP heartbeat sent - ret=0x%X heap=%X", ret, hf);
-    } 
+    }
 
-    //ESP_LOGI(TAG, "VSCP heartbeat sent - ret=0x%X", ret);
-    //ESP_ERROR_CONTINUE(ret != ESP_OK, "<%s>", esp_err_to_name(ret));
+    // ESP_LOGI(TAG, "VSCP heartbeat sent - ret=0x%X", ret);
+    // ESP_ERROR_CONTINUE(ret != ESP_OK, "<%s>", esp_err_to_name(ret));
   }
 
   ESP_LOGW(TAG, "Heartbeat task exit %d", ret);
@@ -467,67 +802,67 @@ vscp_espnow_send_task(void *pvParameter)
   uint8_t buf[VSCP_ESPNOW_PACKET_MAX_SIZE];
   static int cnt = 0;
 
-  //vTaskDelay(5000 / portTICK_RATE_MS);
+  // vTaskDelay(5000 / portTICK_RATE_MS);
   ESP_LOGI(TAG, "Start sending broadcast data");
 
   // vscpEventToEspNowBuf(buf, sizeof(buf), &vscpEspNowEvent);
 
-  //ESP_LOGI(TAG, "Before broadcast send");
+  // ESP_LOGI(TAG, "Before broadcast send");
 
   espnow_frame_head_t frame_head = {
-    .channel = 11,
+    .channel          = 11,
     .retransmit_count = 1,
     .broadcast        = true,
     .forward_ttl      = 7,
-    .ack = 0,
+    .ack              = 0,
   };
 
   while (1) {
-    
-    //esp_task_wdt_reset();
 
-    //if (pthread_mutex_lock(&g_espnow_send_mutex) == 0){
-    if (xSemaphoreTake( g_send_lock, ( TickType_t ) 200 ) ) {       
-      //if (g_send_state.state == VSCP_SEND_STATE_NONE) {
-        memcpy(dest_mac, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN);
-        //ret = esp_now_send(dest_mac, buf, VSCP_ESPNOW_PACKET_MIN_SIZE);        
-        ret = espnow_send(ESPNOW_TYPE_DATA,
-                           dest_mac,
-                           buf,
-                           VSCP_ESPNOW_PACKET_MIN_SIZE, //+ vscpEspNowEvent.len,
-                           &frame_head,
-                           portMAX_DELAY);
-        //g_send_state.state = VSCP_SEND_STATE_SENT;
-        //g_send_state.timestamp = esp_timer_get_time();
-        uint32_t hf = esp_get_free_heap_size();
-        //heap_caps_check_integrity_all(true);
-        ESP_LOGI(TAG, "Broadcast sent - ret=0x%X heap=%X", ret, hf);
-        //g_send_state.state = VSCP_SEND_STATE_NONE;
-        //g_send_state.timestamp = esp_timer_get_time();
+    // esp_task_wdt_reset();
+
+    // if (pthread_mutex_lock(&g_espnow_send_mutex) == 0){
+    if (xSemaphoreTake(g_send_lock, (TickType_t) 200)) {
+      // if (g_send_state.state == VSCP_SEND_STATE_NONE) {
+      memcpy(dest_mac, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN);
+      // ret = esp_now_send(dest_mac, buf, VSCP_ESPNOW_PACKET_MIN_SIZE);
+      ret = espnow_send(ESPNOW_TYPE_DATA,
+                        dest_mac,
+                        buf,
+                        VSCP_ESPNOW_PACKET_MIN_SIZE, //+ vscpEspNowEvent.len,
+                        &frame_head,
+                        portMAX_DELAY);
+      // g_send_state.state = VSCP_SEND_STATE_SENT;
+      // g_send_state.timestamp = esp_timer_get_time();
+      uint32_t hf = esp_get_free_heap_size();
+      // heap_caps_check_integrity_all(true);
+      ESP_LOGI(TAG, "Broadcast sent - ret=0x%X heap=%X", ret, hf);
+      // g_send_state.state = VSCP_SEND_STATE_NONE;
+      // g_send_state.timestamp = esp_timer_get_time();
       //}
       // Check for timeout
-      // else if ((g_send_state.state ==VSCP_SEND_STATE_SENT) && ((esp_timer_get_time() - g_send_state.timestamp) > 5000000L) ){
-      //   ESP_LOGI(TAG, "Send timout");  
+      // else if ((g_send_state.state ==VSCP_SEND_STATE_SENT) && ((esp_timer_get_time() - g_send_state.timestamp) >
+      // 5000000L) ){
+      //   ESP_LOGI(TAG, "Send timout");
       //   g_send_state.state = VSCP_SEND_STATE_NONE;
       //   g_send_state.timestamp = esp_timer_get_time();
       // }
       // else if (g_send_state.state ==VSCP_SEND_STATE_SEND_CONFIRM ){
-      //   ESP_LOGI(TAG, "Send Confirm reset"); 
+      //   ESP_LOGI(TAG, "Send Confirm reset");
       //   g_send_state.state = VSCP_SEND_STATE_NONE;
       //   g_send_state.timestamp = esp_timer_get_time();
       // }
 
-      //pthread_mutex_unlock(&g_espnow_send_mutex);
+      // pthread_mutex_unlock(&g_espnow_send_mutex);
       xSemaphoreGive(g_send_lock);
-      
-      //ESP_ERROR_BREAK(ret != ESP_OK, "<%s>", esp_err_to_name(ret));
+
+      // ESP_ERROR_BREAK(ret != ESP_OK, "<%s>", esp_err_to_name(ret));
     }
-   
-    vTaskDelay(10/ portTICK_RATE_MS);    
+
+    vTaskDelay(10 / portTICK_RATE_MS);
   }
 
   vTaskDelete(NULL);
-
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -537,7 +872,7 @@ vscp_espnow_send_task(void *pvParameter)
 void
 vscp_espnow_recv_task(void *pvParameter)
 {
-  esp_err_t ret = 0;
+  esp_err_t ret                 = 0;
   char *data                    = ESP_MALLOC(ESPNOW_DATA_LEN);
   size_t size                   = ESPNOW_DATA_LEN;
   uint8_t addr[ESPNOW_ADDR_LEN] = { 0 };
@@ -549,7 +884,7 @@ vscp_espnow_recv_task(void *pvParameter)
 
   for (;;) {
     esp_task_wdt_reset();
-    ret = espnow_recv(ESPNOW_TYPE_DATA, addr, data, &size, &rx_ctrl, 1000 / portTICK_RATE_MS); // 
+    ret = espnow_recv(ESPNOW_TYPE_DATA, addr, data, &size, &rx_ctrl, 1000 / portTICK_RATE_MS); //
     ESP_ERROR_CONTINUE(ret != ESP_OK, MACSTR ",  error: <%s>", MAC2STR(addr), esp_err_to_name(ret));
     ESP_LOGI(TAG, "Data from " MACSTR " Data size=%d", MAC2STR(addr), size);
   }
@@ -577,7 +912,7 @@ vscp_espnow_init(void)
 
   g_send_lock = xSemaphoreCreateMutex();
   ESP_ERROR_RETURN(!g_send_lock, ESP_FAIL, "Create send semaphore mutex fail");
-  
+
   espnow_config_t espnow_config = ESPNOW_INIT_CONFIG_DEFAULT();
   espnow_config.qsize.data      = 64;
   espnow_config.send_retry_num  = 5;
@@ -599,7 +934,7 @@ vscp_espnow_init(void)
   peer->ifidx   = ESPNOW_WIFI_IF;
   peer->encrypt = false;
   memcpy(peer->peer_addr, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN);
-  //ESP_ERROR_CHECK(esp_now_add_peer(peer));
+  // ESP_ERROR_CHECK(esp_now_add_peer(peer));
   free(peer);
 
   // Initialize sending parameters.
@@ -612,14 +947,14 @@ vscp_espnow_init(void)
   }
 
   memset(send_param, 0, sizeof(vscp_espnow_send_param_t));
-  send_param->unicast = false;
+  send_param->unicast   = false;
   send_param->broadcast = true;
-  send_param->state = 0;
-  send_param->magic = esp_random();
-  send_param->count = 10000;
-  send_param->delay = 0;
-  send_param->len = 100;
-  send_param->buffer = malloc(100);
+  send_param->state     = 0;
+  send_param->magic     = esp_random();
+  send_param->count     = 10000;
+  send_param->delay     = 0;
+  send_param->len       = 100;
+  send_param->buffer    = malloc(100);
   if (send_param->buffer == NULL) {
     ESP_LOGE(TAG, "Malloc send buffer fail");
     free(send_param);
@@ -628,7 +963,7 @@ vscp_espnow_init(void)
     return ESP_FAIL;
   }
   memcpy(send_param->dest_mac, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN);
-  //vscp_espnow_heart_beat_prepare(send_param); 
+  // vscp_espnow_heart_beat_prepare(send_param);
 
   return ESP_OK;
 }
@@ -640,13 +975,12 @@ vscp_espnow_init(void)
 static void
 vscp_espnow_deinit(void *param)
 {
-  //free(send_param->buffer);
-  //free(send_param);
+  // free(send_param->buffer);
+  // free(send_param);
   vSemaphoreDelete(s_vscp_espnow_queue);
 
   esp_now_deinit();
 }
-
 
 ///////////////////////////////////////////////////////////////////////////////
 // app_main
@@ -654,7 +988,7 @@ vscp_espnow_deinit(void *param)
 
 void
 app_main(void)
-{  
+{
   // Initialize NVS partition
   esp_err_t rv = nvs_flash_init();
   if (rv == ESP_ERR_NVS_NO_FREE_PAGES || rv == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -668,10 +1002,10 @@ app_main(void)
   }
 
   // Create microsecond timer
-  //ESP_ERROR_CHECK(esp_timer_create());
+  // ESP_ERROR_CHECK(esp_timer_create());
 
   // Start timer
-  //esp_timer_start_periodic();
+  // esp_timer_start_periodic();
 
   gpio_config_t io_conf = {};
 
@@ -703,8 +1037,8 @@ app_main(void)
   // Initiate message queues
   for (int i = 0; i < MAX_TCP_CONNECTIONS; i++) {
     g_tr_tcpsrv[i].msg_queue = xQueueCreate(10, VSCP_ESPNOW_PACKET_MAX_SIZE); // tcp/ip link channel i
-  } 
-  g_tr_mqtt.msg_queue      = xQueueCreate(10, VSCP_ESPNOW_PACKET_MAX_SIZE); // MQTT empties
+  }
+  g_tr_mqtt.msg_queue = xQueueCreate(10, VSCP_ESPNOW_PACKET_MAX_SIZE); // MQTT empties
 
   // **************************************************************************
   //                        NVS - Persistent storage
@@ -812,13 +1146,13 @@ app_main(void)
   ESP_ERROR_CHECK(esp_netif_init());
   ESP_ERROR_CHECK(esp_event_loop_create_default());
   wifi_event_group = xEventGroupCreate();
-  
+
   // Register our event handler for Wi-Fi, IP and Provisioning related events
   ESP_ERROR_CHECK(esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
   ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
   ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
 
-  // Initialize Wi-Fi including netif with default config 
+  // Initialize Wi-Fi including netif with default config
   esp_netif_create_default_wifi_sta();
 
 #ifdef CONFIG_PROV_TRANSPORT_SOFTAP
@@ -838,25 +1172,29 @@ app_main(void)
      */
     wifi_prov_mgr_deinit();
 
-    // Start Wi-Fi soft ap & station 
+    // Start Wi-Fi soft ap & station
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_start());
 
 #if CONFIG_ESPNOW_ENABLE_LONG_RANGE
-    ESP_ERROR_CHECK( esp_wifi_set_protocol(ESPNOW_WIFI_IF, WIFI_PROTOCOL_11B|WIFI_PROTOCOL_11G|WIFI_PROTOCOL_11N|WIFI_PROTOCOL_LR) );
+    ESP_ERROR_CHECK(
+      esp_wifi_set_protocol(ESPNOW_WIFI_IF,
+                            WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR));
 #endif
-
   }
 
-  // Wait for Wi-Fi connection 
+  // Wait for Wi-Fi connection
   ESP_LOGI(TAG, "Wait for connection...");
   xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, false, true, portMAX_DELAY);
 
   // Initialize espnow
   if (ESP_OK != vscp_espnow_init()) {
     ESP_LOGI(TAG, "Failed to initialize espnow");
-  } 
+  }
   ESP_LOGI(TAG, "espnow initializated");
+
+  g_sec = ESP_MALLOC(sizeof(espnow_sec_t));
+  espnow_sec_init(g_sec);
 
   // Start LED controlling tast
   xTaskCreate(&led_task, "led_task", 1024, NULL, 5, NULL);
@@ -870,7 +1208,7 @@ app_main(void)
   // Start the VSCP Link Protocol Server
 #ifdef CONFIG_EXAMPLE_IPV6
   xTaskCreate(&tcpsrv_task, "vscp_tcpsrv_task", 4096, (void *) AF_INET6, 5, NULL);
-#else 
+#else
   xTaskCreate(&tcpsrv_task, "vscp_tcpsrv_task", 4096, (void *) AF_INET, 5, NULL);
 #endif
 
@@ -888,8 +1226,6 @@ app_main(void)
     ESP_LOGI(TAG, "Ctrl - Loop");
     vTaskDelay(10000 / portTICK_PERIOD_MS);
   }
-
-  
 
   // Clean up
 

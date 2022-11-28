@@ -12,4 +12,7 @@ idf_component_register(SRCS "main.c"
                     INCLUDE_DIRS "." 
                                   "$ENV{VSCP_COMMON}" 
                                   "$ENV{VSCP_ROOT}"
-                                  "$ENV{VSCP_FIRMWARE_COMMON}")
+                                  "$ENV{VSCP_FIRMWARE_COMMON}"
+
+                    EMBED_TXTFILES ${project_dir}/server_certs/ca_cert.pem              
+            )
