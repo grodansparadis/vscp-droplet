@@ -10,7 +10,7 @@ endif()
 set(EXTRA_COMPONENT_DIRS $ENV{ESPNOW_PATH}/components)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(vscp-dropplet-alpha)
+project(vscp-espnow-alpha)
 
 git_describe(PROJECT_VERSION ${COMPONENT_DIR})
 message("Project commit: " ${PROJECT_VERSION})

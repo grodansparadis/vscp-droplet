@@ -2,7 +2,7 @@ menu "ESPNOW Alpha Node Configuration"
 
     config FIRMWARE_UPGRADE_URL
         string "firmware upgrade url endpoint"
-        default "https://193.188.2.51:443/hello_world.bin"
+        default "https://193.188.2.51:443/downloads/alpha/hello_world.bin"
         help
             URL of server which hosts the firmware
             image.
@@ -172,12 +172,6 @@ menu "ESPNOW Alpha Node Configuration"
         default "n"
         help
             When enable long range, the PHY rate of ESP32 will be 512Kbps or 256Kbps  
-    config FIRMWARE_UPGRADE_URL
-        string "Firmware upgrade url endpoint"
-        default "http://192.168.0.3:8070/hello-world.bin"
-        depends on ESPNOW_OTA_INITATOR
-        help
-            URL of server which hosts the firmware image.
 
     choice ESPNOW_OTA_MODE
         bool "ESP-NOW Mode"
@@ -248,24 +242,5 @@ menu "ESPNOW Alpha Node Configuration"
                 Select the ESP-NOW provisioning responder Mode.
 
     endchoice
-
-    config ESPNOW_PROV_MODE
-        int
-        default 0 if ESPNOW_PROV_INITATOR
-        default 1 if ESPNOW_PROV_RESPONDER
-
-        config ESPNOW_WIFI_SSID
-            string "WiFi SSID"
-            depends on ESPNOW_PROV_RESPONDER
-            default "myssid"
-            help
-                SSID (network name) for the example to connect to.
-
-        config ESPNOW_WIFI_PASSWORD
-            string "WiFi Password"
-            depends on ESPNOW_PROV_RESPONDER
-            default "mypassword"
-            help
-                WiFi password (WPA or WPA2) for the example to use.
   
 endmenu

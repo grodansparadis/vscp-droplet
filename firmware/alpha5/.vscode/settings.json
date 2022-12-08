@@ -73,6 +73,22 @@
     "tcpsrv.h": "c",
     "vscp-firmware-helper.h": "c",
     "*.inc": "c",
-    "any": "c"
+    "any": "c",
+    "esp_event_base.h": "c",
+    "array": "c",
+    "charconv": "c",
+    "chrono": "c",
+    "compare": "c",
+    "functional": "c",
+    "ratio": "c",
+    "tuple": "c",
+    "type_traits": "c",
+    "utility": "c",
+    "variant": "c",
+    "istream": "c",
+    "ostream": "c",
+    "ranges": "c",
+    "aes.h": "c",
+    "vscp_aes.h": "c"
   }
 }

@@ -89,6 +89,12 @@ typedef enum {
     ESPNOW_CTRL_MAX
 } espnow_ctrl_status_t;
 
+typedef enum {
+  ALPHA_NODE,
+  BETA_NODE,
+  GAMMA_NODE,
+} vscp_espnow_node_type_t;
+
 // ----------------------------------------------------------------------------
 
 /**

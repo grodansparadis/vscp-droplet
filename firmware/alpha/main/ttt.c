@@ -780,3 +780,39 @@ vscpEventToEspNowBuf(uint8_t *buf, uint8_t len, vscp_espnow_event_t *pvscpEspNow
 
 //   ESP_LOGE(TAG, "The end");
 // }
+
+
+
+
+// Create microsecond timer
+  // ESP_ERROR_CHECK(esp_timer_create());
+
+  // Start timer
+  // esp_timer_start_periodic();
+  /*
+  gpio_config_t io_conf = {};
+
+  // Disable interrupt
+  io_conf.intr_type = GPIO_INTR_DISABLE;
+
+  // Set as output mode
+  io_conf.mode = GPIO_MODE_OUTPUT;
+
+  // Bit mask of the pins that you want to be able to set
+  io_conf.pin_bit_mask = GPIO_OUTPUT_PIN_SEL;
+
+  // Disable pull-down mode
+  io_conf.pull_down_en = 0;
+
+  // Disable pull-up mode
+  io_conf.pull_up_en = 0;
+
+  // Configure GPIO with the given settings
+  gpio_config(&io_conf);
+
+  gpio_set_level(CONNECTED_LED_GPIO_NUM, 1);
+  gpio_set_level(ACTIVE_LED_GPIO_NUM, 1);*/
+
+
+
+  

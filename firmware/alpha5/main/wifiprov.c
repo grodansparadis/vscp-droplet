@@ -27,6 +27,8 @@
   SOFTWARE.
 */
 
+#include "vscp-projdefs.h"
+
 #include <stdio.h>
 #include <string.h>
 
@@ -34,21 +36,23 @@
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_wifi.h>
+#include <esp_event.h>
+#include <nvs_flash.h>
 
+#include <wifi_provisioning/manager.h>
 
-
-#ifdef CONFIG_PROV_TRANSPORT_BLE 
+#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_BLE 
 #include <wifi_provisioning/scheme_ble.h> 
-#endif /* CONFIG_PROV_TRANSPORT_BLE */
+#endif /* PROV_EXAMPLE_TRANSPORT_BLE */
 
-#ifdef CONFIG_PROV_TRANSPORT_SOFTAP
+#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
 #include <wifi_provisioning/scheme_softap.h>
-#endif /* CONFIG_PROV_TRANSPORT_SOFTAP */
+#endif /* PROV_EXAMPLE_TRANSPORT_SOFTAP */
 
 #include "qrcode.h"
 
 #include <vscp.h>
-#include "vscp_espnow.h"
+#include "vscp-droplet.h"
 #include "led_indicator.h"
 #include "main.h"
 #include "wifiprov.h"
@@ -59,61 +63,40 @@ extern led_indicator_handle_t g_led_handle;
 static const char *TAG = "espnow_alpha wifiprov";
 
 // Provisioning state
-static espnow_ctrl_status_t s_espnow_ctrl_prov_state = ESPNOW_CTRL_INIT;
+//static espnow_ctrl_status_t s_espnow_ctrl_prov_state = ESPNOW_CTRL_INIT;
 
 ///////////////////////////////////////////////////////////////////////////////
 // wifi_prov_print_qr
 //
 
-void
-wifi_prov_print_qr(const char *name, const char *username, const char *pop, const char *transport)
+void wifi_prov_print_qr(const char *name, const char *username, const char *pop, const char *transport)
 {
-  if (!name || !transport) {
-    ESP_LOGW(TAG, "Cannot generate QR code payload. Data missing.");
-    return;
-  }
-  char payload[150] = { 0 };
-  if (pop) {
-#if CONFIG_PROV_SECURITY_VERSION_1
-    snprintf(payload,
-             sizeof(payload),
-             "{\"ver\":\"%s\",\"name\":\"%s\""
-             ",\"pop\":\"%s\",\"transport\":\"%s\"}",
-             PROV_QR_VERSION,
-             name,
-             pop,
-             transport);
-#elif CONFIG_PROV_SECURITY_VERSION_2
-    snprintf(payload,
-             sizeof(payload),
-             "{\"ver\":\"%s\",\"name\":\"%s\""
-             ",\"username\":\"%s\",\"pop\":\"%s\",\"transport\":\"%s\"}",
-             PROV_QR_VERSION,
-             name,
-             username,
-             pop,
-             transport);
+    if (!name || !transport) {
+        ESP_LOGW(TAG, "Cannot generate QR code payload. Data missing.");
+        return;
+    }
+    char payload[150] = {0};
+    if (pop) {
+#if CONFIG_EXAMPLE_PROV_SECURITY_VERSION_1
+        snprintf(payload, sizeof(payload), "{\"ver\":\"%s\",\"name\":\"%s\"" \
+                    ",\"pop\":\"%s\",\"transport\":\"%s\"}",
+                    PROV_QR_VERSION, name, pop, transport);
+#elif CONFIG_EXAMPLE_PROV_SECURITY_VERSION_2
+        snprintf(payload, sizeof(payload), "{\"ver\":\"%s\",\"name\":\"%s\"" \
+                    ",\"username\":\"%s\",\"pop\":\"%s\",\"transport\":\"%s\"}",
+                    PROV_QR_VERSION, name, username, pop, transport);
 #endif
-  }
-  else {
-    snprintf(payload,
-             sizeof(payload),
-             "{\"ver\":\"%s\",\"name\":\"%s\""
-             ",\"transport\":\"%s\"}",
-             PROV_QR_VERSION,
-             name,
-             transport);
-  }
-#ifdef CONFIG_PROV_SHOW_QR
-  ESP_LOGI(TAG, "Scan this QR code from the provisioning application for Provisioning.");
-  esp_qrcode_config_t cfg = ESP_QRCODE_CONFIG_DEFAULT();
-  esp_qrcode_generate(&cfg, payload);
+    } else {
+        snprintf(payload, sizeof(payload), "{\"ver\":\"%s\",\"name\":\"%s\"" \
+                    ",\"transport\":\"%s\"}",
+                    PROV_QR_VERSION, name, transport);
+    }
+#ifdef CONFIG_EXAMPLE_PROV_SHOW_QR
+    ESP_LOGI(TAG, "Scan this QR code from the provisioning application for Provisioning.");
+    esp_qrcode_config_t cfg = ESP_QRCODE_CONFIG_DEFAULT();
+    esp_qrcode_generate(&cfg, payload);
 #endif /* CONFIG_APP_WIFI_PROV_SHOW_QR */
-  ESP_LOGI(TAG,
-           "If QR code is not visible, copy paste the below URL in a "
-           "browser.\n%s?data=%s",
-           QRCODE_BASE_URL,
-           payload);
+    ESP_LOGI(TAG, "If QR code is not visible, copy paste the below URL in a browser.\n%s?data=%s", QRCODE_BASE_URL, payload);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -190,9 +173,9 @@ get_device_service_name(char *service_name, size_t max)
 //                      Provisioning
 // --------------------------------------------------------
 
-#if CONFIG_PROV_SECURITY_VERSION_2
+#if PROV_SECURITY_VERSION_2
 
-#if CONFIG_PROV_SEC2_DEV_MODE
+#if PROV_SEC2_DEV_MODE
 #define WCANG_PROV_SEC2_USERNAME    "testuser"
 #define WCANG_PROV_SEC2_PWD         "testpassword"
 
@@ -235,12 +218,12 @@ static const char sec2_verifier[] = {
 static esp_err_t
 get_sec2_salt(const char **salt, uint16_t *salt_len)
 {
-#if CONFIG_PROV_SEC2_DEV_MODE
+#if PROV_SEC2_DEV_MODE
   ESP_LOGI(TAG, "Development mode: using hard coded salt");
   *salt     = sec2_salt;
   *salt_len = sizeof(sec2_salt);
   return ESP_OK;
-#elif CONFIG_PROV_SEC2_PROD_MODE
+#elif PROV_SEC2_PROD_MODE
   ESP_LOGE(TAG, "Not implemented!");
   return ESP_FAIL;
 #endif
@@ -253,12 +236,12 @@ get_sec2_salt(const char **salt, uint16_t *salt_len)
 static esp_err_t
 get_sec2_verifier(const char **verifier, uint16_t *verifier_len)
 {
-#if CONFIG_PROV_SEC2_DEV_MODE
+#if PROV_SEC2_DEV_MODE
   ESP_LOGI(TAG, "Development mode: using hard coded verifier");
   *verifier     = sec2_verifier;
   *verifier_len = sizeof(sec2_verifier);
   return ESP_OK;
-#elif CONFIG_PROV_SEC2_PROD_MODE
+#elif PROV_SEC2_PROD_MODE
   /* This code needs to be updated with appropriate implementation to provide
    * verifier */
   ESP_LOGE(TAG, "Not implemented!");
@@ -275,20 +258,16 @@ bool wifi_provisioning(void)
 {
   ESP_LOGI(TAG, "wifi provisioning started");
 
-  if (led_indicator_start(g_led_handle, BLINK_PROVISIONING) != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to start indicator lite");
-  }
-
   // Configuration for the provisioning manager
   wifi_prov_mgr_config_t config = {
 
   // What is the Provisioning Scheme that we want ?
   // wifi_prov_scheme_softap or wifi_prov_scheme_ble
-#ifdef CONFIG_PROV_TRANSPORT_BLE
+#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_BLE
   .scheme = wifi_prov_scheme_ble,
 #endif // CONFIG_PROV_TRANSPORT_BLE
 
-#ifdef CONFIG_PROV_TRANSPORT_SOFTAP
+#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
   .scheme = wifi_prov_scheme_softap,
 #endif // CONFIG_PROV_TRANSPORT_SOFTAP
 
@@ -304,10 +283,10 @@ bool wifi_provisioning(void)
    */
 #ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_BLE  
     .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM
-#endif /* CONFIG_EXAMPLE_PROV_TRANSPORT_BLE */    
+#endif /* EXAMPLE_PROV_TRANSPORT_BLE */    
 #ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
         .scheme_event_handler = WIFI_PROV_EVENT_HANDLER_NONE
-#endif /* CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP */
+#endif /* EXAMPLE_PROV_TRANSPORT_SOFTAP */
 
   };
 
@@ -321,7 +300,7 @@ bool wifi_provisioning(void)
 
   bool provisioned = false;
 
-#ifdef CONFIG_RESET_PROVISIONED
+#ifdef RESET_PROVISIONED
   wifi_prov_mgr_reset_provisioning();
 #else
   // Let's find out if the device is provisioned 
@@ -354,7 +333,7 @@ bool wifi_provisioning(void)
     char service_name[12];
     get_device_service_name(service_name, sizeof(service_name));
 
-#ifdef CONFIG_PROV_SECURITY_VERSION_1
+#ifdef CONFIG_EXAMPLE_PROV_SECURITY_VERSION_1
     /*
      * What is the security level that we want (0, 1, 2):
      *
@@ -365,6 +344,7 @@ bool wifi_provisioning(void)
      *   - WIFI_PROV_SECURITY_2 SRP6a based authentication and key exchange
      *      + AES-GCM encryption/decryption of messages
      */
+    
     wifi_prov_security_t security = WIFI_PROV_SECURITY_1;
 
     /*
@@ -372,7 +352,7 @@ bool wifi_provisioning(void)
      *   - this should be a string with length > 0
      *   - NULL if not used
      */
-    const char *pop = "CONFIG_ESPNOW_SESSION_POP; // espnow_pop";
+    const char *pop = "espnow_pop";
     /*
      * If the pop is allocated dynamically, then it should be valid till
      * the provisioning process is running.
@@ -389,12 +369,12 @@ bool wifi_provisioning(void)
 
     const char *username = NULL;
 
-#elif CONFIG_PROV_SECURITY_VERSION_2
+#elif PROV_SECURITY_VERSION_2
     wifi_prov_security_t security = WIFI_PROV_SECURITY_2;
     // The username must be the same one, which has been used in the generation
     // of salt and verifier
 
-#if CONFIG_PROV_SEC2_DEV_MODE
+#if PROV_SEC2_DEV_MODE
     /*
      * This pop field represents the password that will be used to generate salt
      * and verifier. The field is present here in order to generate the QR code
@@ -403,7 +383,7 @@ bool wifi_provisioning(void)
      */
     const char *username = WCANG_PROV_SEC2_USERNAME;
     const char *pop = WCANG_PROV_SEC2_PWD;
-#elif CONFIG_PROV_SEC2_PROD_MODE
+#elif PROV_SEC2_PROD_MODE
     /*
      * The username and password shall not be embedded in the firmware,
      * they should be provided to the user by other means.
@@ -434,7 +414,7 @@ bool wifi_provisioning(void)
      */
     const char *service_key = NULL;
 
-#ifdef CONFIG_PROV_TRANSPORT_BLE
+#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_BLE
     /*
      * This step is only useful when scheme is wifi_prov_scheme_ble. This will
      * set a custom 128 bit UUID which will be included in the BLE advertisement
@@ -466,7 +446,7 @@ bool wifi_provisioning(void)
      * see the sdkconfig.defaults in the example project)
      */
     wifi_prov_scheme_ble_set_service_uuid(custom_service_uuid);
-#endif /* CONFIG_PROV_TRANSPORT_BLE */
+#endif /* CONFIG_PROV_EXAMPLE_TRANSPORT_BLE */
 
     /*
      * An optional endpoint that applications can create if they expect to
@@ -496,11 +476,11 @@ bool wifi_provisioning(void)
     // wifi_prov_mgr_deinit();
 
     /* Print QR code for provisioning */
-#ifdef CONFIG_PROV_TRANSPORT_BLE
-    wifi_prov_print_qr(service_name, username, pop, PROV_TRANSPORT_BLE);
-#else  // CONFIG_PROV_TRANSPORT_SOFTAP
-    wifi_prov_print_qr(service_name, username, pop, PROV_TRANSPORT_SOFTAP);
-#endif // CONFIG_PROV_TRANSPORT_BLE 
+#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_BLE
+    wifi_prov_print_qr(service_name, username, pop, "ble");
+#else  // CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
+    wifi_prov_print_qr(service_name, username, pop, "softap");
+#endif // CONFIG_EXAMPLE_PROV_TRANSPORT_BLE 
     
     
   }

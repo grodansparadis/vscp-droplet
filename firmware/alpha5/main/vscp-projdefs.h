@@ -14,7 +14,7 @@
 #define INIT_BUTTON_PIN     0
 
 // GPIO number for indicator LED
-#define INDICTOR_LED_PIN    2
+#define INDICATOR_LED_PIN    2
 
 // OTA mode
 // ESPNOW_OTA_INITATOR or ESPNOW_OTA_RESPONDEDER
@@ -34,11 +34,13 @@
 
 // Wi-Fi provisioning component offers both, SoftAP and BLE transports. Choose one.
 // PROV_TRANSPORT_BLE or PROV_TRANSPORT_SOFTAP
-#define PROV_TRANSPORT    PROV_TRANSPORT_BLE
+//#define PROV_TRANSPORT_BLE      PROV_TRANSPORT_BLE
+//#define PROV_TRANSPORT_SOFTAP   PROV_TRANSPORT_SOFTAP
 
 //
 // ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1 or ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2
-#define PROV_SECURITY_VERSION   ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1
+#define ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1
+//#define ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2
 
 // This enables the production mode for security version 2.
 // PROV_SEC2_PROD_MODE or PROV_SEC2_DEV_MODE
@@ -58,35 +60,40 @@
 #define PROV_MGR_MAX_RETRY_CNT          5
 
 // Show the QR code for provisioning.
-#define PROV_SHOW_QR                    true
+#define PROV_SHOW_QR          true
 
 // This enables BLE 4.2 features for Bluedroid.
 // On IDF_TARGET_ESP32C3 || IDF_TARGET_ESP32S3
-#define PROV_USING_BLUEDROID            true
+#define PROV_USING_BLUEDROID  true
+
+#define DROPLET_CHANNEL        1
 
 // Wifi mode
 // ESPNOW_WIFI_MODE_STATION or ESPNOW_WIFI_MODE_STATION_SOFTAP
-#define ESPNOW_WIFI_MODE    ESPNOW_WIFI_MODE_STATION_SOFTAP
+#define DROPLET_WIFI_MODE      WIFI_MODE_APSTA
+
+// ESP_IF_WIFI_AP or WIFI_MODE_STA
+#define DROPLET_WIFI_IF        ESP_IF_WIFI_AP
 
 // Proof of Possession (PoP) string used to authorize session and derive shared key.
-#define ESPNOW_SESSION_POP    "ESPNOW VSCP node ver 1"
+//#define DROPLET_SESSION_POP    "ESPNOW VSCP node ver 1"
 
 // ESPNOW primary master for the example to use. The length of ESPNOW primary master must be 16 bytes.
-#define ESPNOW_PMK            "pmk1234567890123"
+#define DROPLET_PMK            "pmk1234567890123"
 
 // ESPNOW local master for the example to use. The length of ESPNOW local master must be 16 bytes.
-#define ESPNOW_LMK            "lmk1234567890123"
+#define DROPLET_LMK            "lmk1234567890123"
 
 // Select the ESP-NOW Sec Mode.
 // ESPNOW_SEC_INITATOR or ESPNOW_SEC_RESPONDER
-#define ESPNOW_SEC_MODE       ESPNOW_SEC_INITATOR
+#define DROPLET_SEC_MODE       ESPNOW_SEC_INITATOR
 
 // Select the ESP-NOW Prov Mode.
 // ESPNOW_PROV_INITATOR or ESPNOW_PROV_RESPONDER
-#define ESPNOW_PROV_MODE      ESPNOW_PROV_INITATOR
+#define DROPLET_PROV_MODE      ESPNOW_PROV_INITATOR
 
 // The channel on which sending and receiving ESPNOW data.
-#define ESPNOW_CHANNEL  0
+//#define ESPNOW_CHANNEL        0
 
 // When enable long range, the PHY rate of ESP32 will be 512Kbps or 256Kbps 
 #define ESPNOW_ENABLE_LONG_RANGE      false

@@ -92,11 +92,11 @@ vscp_espnow_build_guid_from_mac(uint8_t *pguid, const uint8_t *pmac, uint16_t ni
 
 
 ///////////////////////////////////////////////////////////////////////////////
-// vscp_espnow_build_heartbeat
+// vscp_espnow_build_l1_heartbeat
 //
 
 int
-vscp_espnow_build_heartbeat(uint8_t *buf, uint8_t len, const uint8_t *pguid)
+vscp_espnow_build_l1_heartbeat(uint8_t *buf, uint8_t len, const uint8_t *pguid)
 {
   // Need a buffer
   if (NULL == buf) {

@@ -1,0 +1,151 @@
+menu "Alpha Node Configuration"
+
+    choice EXAMPLE_PROV_TRANSPORT
+        bool "Provisioning Transport"
+        default EXAMPLE_PROV_TRANSPORT_SOFTAP if IDF_TARGET_ESP32S2
+        default EXAMPLE_PROV_TRANSPORT_BLE
+        help
+            Wi-Fi provisioning component offers both, SoftAP and BLE transports. Choose any one.
+
+        config EXAMPLE_PROV_TRANSPORT_BLE
+            bool "BLE"
+            select BT_ENABLED
+            depends on !IDF_TARGET_ESP32S2
+        config EXAMPLE_PROV_TRANSPORT_SOFTAP
+            bool "Soft AP"
+    endchoice
+
+    choice EXAMPLE_PROV_SECURITY_VERSION
+        bool "Protocomm security version"
+        default EXAMPLE_PROV_SECURITY_VERSION_2
+        help
+            Wi-Fi provisioning component offers 3 security versions.
+            The example offers a choice between security version 1 and 2.
+
+        config EXAMPLE_PROV_SECURITY_VERSION_1
+            bool "Security version 1"
+            select ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1
+
+        config EXAMPLE_PROV_SECURITY_VERSION_2
+            bool "Security version 2"
+            select ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2
+    endchoice
+
+    choice EXAMPLE_PROV_MODE
+        bool "Security version 2 mode"
+        depends on EXAMPLE_PROV_SECURITY_VERSION_2
+        default EXAMPLE_PROV_SEC2_DEV_MODE
+
+        config EXAMPLE_PROV_SEC2_DEV_MODE
+            bool "Security version 2 development mode"
+            depends on EXAMPLE_PROV_SECURITY_VERSION_2
+            help
+                This enables the development mode for
+                security version 2.
+                Please note that this mode is NOT recommended for production purpose.
+
+        config EXAMPLE_PROV_SEC2_PROD_MODE
+            bool "Security version 2 production mode"
+            depends on EXAMPLE_PROV_SECURITY_VERSION_2
+            help
+                This enables the production mode for
+                security version 2.
+    endchoice
+
+    config EXAMPLE_PROV_TRANSPORT
+        int
+        default 1 if EXAMPLE_PROV_TRANSPORT_BLE
+        default 2 if EXAMPLE_PROV_TRANSPORT_SOFTAP
+
+    config EXAMPLE_RESET_PROVISIONED
+        bool
+        default n
+        prompt "Reset provisioned status of the device"
+        help
+            This erases the NVS to reset provisioned status of the device on every reboot.
+            Provisioned status is determined by the Wi-Fi STA configuration, saved on the NVS.
+
+    config EXAMPLE_RESET_PROV_MGR_ON_FAILURE
+        bool
+        default y
+        prompt "Reset provisioned credentials and state machine after session failure"
+        help
+            Enable reseting provisioned credentials and state machine after session failure.
+            This will restart the provisioning service after retries are exhausted.
+
+    config EXAMPLE_PROV_MGR_MAX_RETRY_CNT
+        int
+        default 5
+        prompt "Max retries before reseting provisioning state machine"
+        depends on EXAMPLE_RESET_PROV_MGR_ON_FAILURE
+        help
+            Set the Maximum retry to avoid reconnecting to an inexistent AP or if credentials
+            are misconfigured. Provisioned credentials are erased and internal state machine
+            is reset after this threshold is reached.
+
+    config EXAMPLE_PROV_SHOW_QR
+        bool "Show provisioning QR code"
+        default y
+        help
+            Show the QR code for provisioning.
+
+    config EXAMPLE_PROV_USING_BLUEDROID
+        bool
+        depends on (BT_BLUEDROID_ENABLED && (IDF_TARGET_ESP32C3 || IDF_TARGET_ESP32S3))
+        select BT_BLE_42_FEATURES_SUPPORTED
+        default y
+        help
+            This enables BLE 4.2 features for Bluedroid.
+
+    config BUTTON_PERIOD_TIME_MS
+        int "BUTTON PERIOD TIME (MS)"
+        range 2 20
+        default 5
+        help
+            "Button scan interval"
+
+    config BUTTON_DEBOUNCE_TICKS
+        int "BUTTON DEBOUNCE TICKS"
+        range 1 8
+        default 2
+        help
+            "One CONFIG_BUTTON_DEBOUNCE_TICKS equal to CONFIG_BUTTON_PERIOD_TIME_MS"
+
+    config BUTTON_SHORT_PRESS_TIME_MS
+        int "BUTTON SHORT PRESS TIME (MS)"
+        range 50 800
+        default 180
+
+    config BUTTON_LONG_PRESS_TIME_MS
+        int "BUTTON LONG PRESS TIME (MS)"
+        range 500 5000
+        default 1500
+
+    config BUTTON_SERIAL_TIME_MS
+        int "BUTTON SERIAL TIME (MS)"
+        range 2 1000
+        default 20
+        help
+            "Serial trigger interval"
+
+    config ADC_BUTTON_MAX_CHANNEL
+        int "ADC BUTTON MAX CHANNEL"
+        range 1 5
+        default 3
+        help
+            "Maximum number of channels for ADC buttons"
+
+    config ADC_BUTTON_MAX_BUTTON_PER_CHANNEL
+        int "ADC BUTTON MAX BUTTON PER CHANNEL"
+        range 1 10
+        default 8
+        help
+            "Maximum number of buttons per channel"
+
+    config ADC_BUTTON_SAMPLE_TIMES
+        int "ADC BUTTON SAMPLE TIMES"
+        range 1 4
+        default 1
+        help
+            "Number of samples per scan"        
+endmenu
