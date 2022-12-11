@@ -152,7 +152,7 @@ typedef enum {
   MAIN_STATE_SET_DEFAULTS 
 } alpha_node_states_t;
 
-ESP_EVENT_DECLARE_BASE(ALPHA_EVENTS);         // declaration of the alpha events family
+ESP_EVENT_DECLARE_BASE(ALPHA_EVENT);         // declaration of the alpha events family
 
 /*!
   Alpha events
@@ -179,6 +179,16 @@ typedef enum {
    * Restore factory default and erase wifi credentials
    */
   ALPHA_RESTORE_FACTORY_DEFAULTS,
+
+  /**
+   * Node is waiting to get IP address
+   */
+  ALPHA_GET_IP_ADDRESS_START,
+
+  /**
+   * Node have received IP address
+   */
+  ALPHA_GET_IP_ADDRESS_STOP,
 } alpha_cb_event_t;
 
 

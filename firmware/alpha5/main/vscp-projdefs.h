@@ -9,12 +9,14 @@
 #ifndef _VSCP_PROJDEFS_H_
 #define _VSCP_PROJDEFS_H_
 
+// 16-bit nickname for node
+#define PROJDEF_NODE_NICKNAME   0
 
 // GPIO number for init button
-#define INIT_BUTTON_PIN     0
+#define INIT_BUTTON_PIN         0
 
 // GPIO number for indicator LED
-#define INDICATOR_LED_PIN    2
+#define INDICATOR_LED_PIN       2
 
 // OTA mode
 // ESPNOW_OTA_INITATOR or ESPNOW_OTA_RESPONDEDER

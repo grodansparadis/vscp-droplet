@@ -97,7 +97,7 @@ extern const uint8_t server_cert_pem_end[] asm("_binary_ca_cert_pem_end");
 alpha_node_states_t g_state = MAIN_STATE_INIT;
 
 // Event source task related definitions
-ESP_EVENT_DEFINE_BASE(ALPHA_EVENTS);
+ESP_EVENT_DEFINE_BASE(ALPHA_EVENT);
 
 // Handle for status led
 led_indicator_handle_t g_led_handle;
@@ -756,13 +756,18 @@ get_device_guid(uint8_t *pguid)
 static void
 alpha_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
-  ESP_LOGI(TAG, "-----------------------------------------");
-  if (event_base == ALPHA_EVENTS) {
+  if (event_base == ALPHA_EVENT) {
     if (event_id == ALPHA_START_CLIENT_PROVISIONING) {
       ESP_LOGI(TAG, "Start client provisioning");
     }
     else if (event_id == ALPHA_STOP_CLIENT_PROVISIONING) {
       ESP_LOGI(TAG, "Stop client provisioning");
+    }
+    else if (event_id == ALPHA_GET_IP_ADDRESS_START) {
+      ESP_LOGI(TAG, "Waiting for IP-address");
+    }
+    else if (event_id == ALPHA_GET_IP_ADDRESS_STOP) {
+      ESP_LOGI(TAG, "IP-address received");
     }
   }
 }
@@ -889,10 +894,13 @@ system_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, v
   }
   else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
     ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
-    ESP_LOGI(TAG, "Connected with IP Address:" IPSTR, IP2STR(&event->ip_info.ip));
+    ESP_LOGI(TAG, "Connected with IP Address: " IPSTR, IP2STR(&event->ip_info.ip));
     g_state = MAIN_STATE_WORK;
     /* Signal main application to continue execution */
     xEventGroupSetBits(g_wifi_event_group, WIFI_CONNECTED_EVENT);
+  }
+  else if (event_base == ALPHA_EVENT) {
+    ESP_LOGI(TAG, "----------------------------------------------------------->");
   }
 }
 
@@ -924,46 +932,41 @@ static void
 vscp_heartbeat_task(void *pvParameter)
 {
   esp_err_t ret = 0;
-  // uint8_t dest_mac[ESP_NOW_ETH_ALEN];
-  // uint8_t buf[VSCP_ESPNOW_PACKET_MIN_SIZE + 3];
-  // size_t size = sizeof(buf);
+  uint8_t dest_addr[ESP_NOW_ETH_ALEN] = {0xff,0xff,0xff,0xff,0xff,0xff};
+  uint8_t buf[DROPLET_MIN_FRAME + 3];  // Three byte data
+  size_t size = sizeof(buf);
+  int recv_seq = 0;
 
-  // // Create Heartbeat event
-  // if ( VSCP_ERROR_SUCCESS != (ret = vscp_espnow_build_l1_heartbeat(buf, size, g_node_guid))) {
-  //   ESP_LOGE(TAG, "Could not create heartbeat event, will exit task. VSCP rv %d", ret);
-  //   goto ERROR;
-  // }
+  // Create Heartbeat event
+  if ( VSCP_ERROR_SUCCESS != (ret = droplet_build_l1_heartbeat(buf, size, g_node_guid))) {
+    ESP_LOGE(TAG, "Could not create heartbeat event, will exit task. VSCP rv %d", ret);
+    goto ERROR;
+  }
 
-  // // Add identifier for node type
-  // buf[VSCP_ESPNOW_PACKET_MIN_SIZE] = ALPHA_NODE;
+  ESP_LOGI(TAG, "Start sending VSCP heartbeats");
 
-  // ESP_LOGI(TAG, "Start sending VSCP heartbeats");
-
-  // espnow_frame_head_t frame_head = {
-  //   .retransmit_count = 1,
-  //   .broadcast        = true,
-  //   .forward_ttl      = 31,
-  // };
-
-  // while (1) {
+  while (1) {
 
   //   // if (pthread_mutex_lock(&g_espnow_send_mutex) == 0){
   //   if (xSemaphoreTake(g_send_lock, (TickType_t)100)) {
   //     ret = espnow_send(ESPNOW_TYPE_DATA, dest_mac, buf, size, &frame_head, portMAX_DELAY);
   //     ret = esp_now_send(dest_mac, buf, size);
   //     xSemaphoreGive(g_send_lock);
-  //     uint32_t hf = esp_get_free_heap_size();
-  //     heap_caps_check_integrity_all(true);
-  //     ESP_LOGI(TAG, "---------> VSCP heartbeat sent - ret=0x%X heap=%X", (unsigned int)ret, (unsigned int)hf);
+    ret = droplet_send(dest_addr, false, 4, buf, DROPLET_MIN_FRAME + 3, 1000/portTICK_PERIOD_MS);
+    ESP_LOGI(TAG, "VSCP heartbeat sent - ret=0x%X", ret);
 
-  //     vTaskDelay(VSCP_HEART_BEAT_INTERVAL / portTICK_PERIOD_MS);
-  //   }
+    uint32_t hf = esp_get_free_heap_size();
+    heap_caps_check_integrity_all(true);
+    ESP_LOGI(TAG, "---------> VSCP heartbeat sent - ret=0x%X heap=%X", (unsigned int)ret, (unsigned int)hf);
 
-  // ESP_LOGI(TAG, "VSCP heartbeat sent - ret=0x%X", ret);
-  // ESP_ERROR_CONTINUE(ret != ESP_OK, "<%s>", esp_err_to_name(ret));
-  // }
+    ESP_LOGI(TAG, "VSCP heartbeat sent - ret=0x%X", ret);
+    vTaskDelay(VSCP_HEART_BEAT_INTERVAL / portTICK_PERIOD_MS);
+  }
 
-  // ERROR:
+  
+  //ESP_ERROR_CONTINUE(ret != ESP_OK, "<%s>", esp_err_to_name(ret));
+
+ERROR:
   ESP_LOGW(TAG, "Heartbeat task exit %d", ret);
   vTaskDelete(NULL);
 }
@@ -1082,6 +1085,10 @@ vscp_espnow_recv_task(void *pvParameter)
 void
 app_main(void)
 {
+  uint8_t dest_addr[ESP_NOW_ETH_ALEN] = {0xff,0xff,0xff,0xff,0xff,0xff};
+  uint8_t buf[DROPLET_MIN_FRAME + 3];  // Three byte data
+  size_t size = sizeof(buf);
+
   // Initialize NVS partition
   esp_err_t rv = nvs_flash_init();
   if (rv == ESP_ERR_NVS_NO_FREE_PAGES || rv == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -1094,16 +1101,7 @@ app_main(void)
     ESP_ERROR_CHECK(nvs_flash_init());
   }
 
-  esp_event_loop_args_t alpha_loop = {
-    .queue_size = 10,
-    .task_name  = NULL,
-    // .task_priority = uxTaskPriorityGet(NULL),
-    // .task_stack_size = 1024, // 3072,
-    // .task_core_id = tskNO_AFFINITY
-  };
-
-  esp_event_loop_handle_t alpha_loop_handle;
-  esp_event_loop_create(&alpha_loop, &alpha_loop_handle);
+  
 
   // Create message queues  QueueHandle_t tx_msg_queue
   // g_tx_msg_queue = xQueueCreate(ESPNOW_SIZE_TX_BUF, sizeof(vscp_espnow_event_t)); /*< Outgoing esp-now messages */
@@ -1258,13 +1256,24 @@ app_main(void)
   ESP_ERROR_CHECK(esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, &system_event_handler, NULL));
   ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &system_event_handler, NULL));
   ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &system_event_handler, NULL));
+  ESP_ERROR_CHECK(esp_event_handler_register(ALPHA_EVENT, ESP_EVENT_ANY_ID, &system_event_handler, NULL));
 
-  ESP_ERROR_CHECK(esp_event_handler_instance_register_with(alpha_loop_handle,
-                                                           ALPHA_EVENTS,
+  /* esp_event_loop_args_t alpha_loop_config = {
+    .queue_size = 10,
+    .task_name = "alpha loop",
+    .task_priority = uxTaskPriorityGet(NULL),
+    .task_stack_size = 2048,
+    .task_core_id = tskNO_AFFINITY
+  };
+
+  esp_event_loop_handle_t alpha_loop_handle;
+  ESP_ERROR_CHECK(esp_event_loop_create(&alpha_loop_config, &alpha_loop_handle));
+
+  ESP_ERROR_CHECK(esp_event_handler_register_with(alpha_loop_handle,
+                                                           ALPHA_EVENT,
                                                            ESP_EVENT_ANY_ID,
                                                            alpha_event_handler,
-                                                           NULL,
-                                                           NULL));
+                                                           NULL)); */
 
   // Initialize Wi-Fi including netif with default config
   esp_netif_create_default_wifi_sta();
@@ -1296,7 +1305,7 @@ app_main(void)
 
 #if CONFIG_ESPNOW_ENABLE_LONG_RANGE
     ESP_ERROR_CHECK(
-      esp_wifi_set_protocol(ESPNOW_WIFI_IF,
+      esp_wifi_set_protocol(ESP_IF_WIFI_STA,
                             WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR));
 #endif
   }
@@ -1307,10 +1316,12 @@ app_main(void)
 
   // Wait for Wi-Fi connection
   ESP_LOGI(TAG, "Wait for wifi connection...");
+  esp_event_post( /*_to(alpha_loop_handle,*/ ALPHA_EVENT, ALPHA_GET_IP_ADDRESS_START, NULL, 0, portMAX_DELAY);
   xEventGroupWaitBits(g_wifi_event_group, WIFI_CONNECTED_EVENT, false, true, portMAX_DELAY);
+  esp_event_post(/*_to(alpha_loop_handle,*/ ALPHA_EVENT, ALPHA_GET_IP_ADDRESS_STOP, NULL, 0, portMAX_DELAY);
 
   if (led_indicator_start(g_led_handle, BLINK_CONNECTED) != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to start indicator lite");
+    ESP_LOGE(TAG, "Failed to start indicator light");
   }
 
   // Initialize droplet
@@ -1320,10 +1331,9 @@ app_main(void)
     .bForwardEnable = true,
     .bForwardSwitchChannel = false,
     .sizeQueue = 32,
-    .bSecEnable = true,
     .bFilterAdjacentChannel = false,
     .filterWeakSignal = false,
-    .pmk = {"0123456789012345"}
+    .pmk = {"01234567890012345678900123456789001"}
   };
 
   if (ESP_OK != droplet_init(&droplet_config)) {
@@ -1384,12 +1394,16 @@ app_main(void)
     Start main application loop now
   */
 
+ if ( VSCP_ERROR_SUCCESS != (ret = droplet_build_l1_heartbeat(buf, size, g_node_guid))) {
+    ESP_LOGE(TAG, "Could not create heartbeat event, will exit task. VSCP rv %d", ret);
+  }
+
+    ret = droplet_send(dest_addr, true, 4, buf, DROPLET_MIN_FRAME + 3, 1000/portTICK_PERIOD_MS);
+
   while (1) {
     // esp_task_wdt_reset();
-    ESP_LOGI(TAG, "Ctrl - Loop");
-    ESP_ERROR_CHECK(
-      esp_event_post_to(alpha_loop_handle, ALPHA_EVENTS, ALPHA_START_CLIENT_PROVISIONING, NULL, 0, portMAX_DELAY));
-    vTaskDelay(10000 / portTICK_PERIOD_MS);
+    ESP_LOGI(TAG, "Ctrl - Loop");    
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 
   // Unmount web spiffs partition and disable SPIFFS
