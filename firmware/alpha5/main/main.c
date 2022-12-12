@@ -931,14 +931,14 @@ led_task(void *pvParameter)
 static void
 vscp_heartbeat_task(void *pvParameter)
 {
-  esp_err_t ret = 0;
-  uint8_t dest_addr[ESP_NOW_ETH_ALEN] = {0xff,0xff,0xff,0xff,0xff,0xff};
-  uint8_t buf[DROPLET_MIN_FRAME + 3];  // Three byte data
-  size_t size = sizeof(buf);
+  esp_err_t ret                       = 0;
+  uint8_t dest_addr[ESP_NOW_ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+  uint8_t buf[DROPLET_MIN_FRAME + 3]; // Three byte data
+  size_t size  = sizeof(buf);
   int recv_seq = 0;
 
   // Create Heartbeat event
-  if ( VSCP_ERROR_SUCCESS != (ret = droplet_build_l1_heartbeat(buf, size, g_node_guid))) {
+  if (VSCP_ERROR_SUCCESS != (ret = droplet_build_l1_heartbeat(buf, size, g_node_guid))) {
     ESP_LOGE(TAG, "Could not create heartbeat event, will exit task. VSCP rv %d", ret);
     goto ERROR;
   }
@@ -947,24 +947,23 @@ vscp_heartbeat_task(void *pvParameter)
 
   while (1) {
 
-  //   // if (pthread_mutex_lock(&g_espnow_send_mutex) == 0){
-  //   if (xSemaphoreTake(g_send_lock, (TickType_t)100)) {
-  //     ret = espnow_send(ESPNOW_TYPE_DATA, dest_mac, buf, size, &frame_head, portMAX_DELAY);
-  //     ret = esp_now_send(dest_mac, buf, size);
-  //     xSemaphoreGive(g_send_lock);
-    ret = droplet_send(dest_addr, false, 4, buf, DROPLET_MIN_FRAME + 3, 1000/portTICK_PERIOD_MS);
+    //   // if (pthread_mutex_lock(&g_espnow_send_mutex) == 0){
+    //   if (xSemaphoreTake(g_send_lock, (TickType_t)100)) {
+    //     ret = espnow_send(ESPNOW_TYPE_DATA, dest_mac, buf, size, &frame_head, portMAX_DELAY);
+    //     ret = esp_now_send(dest_mac, buf, size);
+    //     xSemaphoreGive(g_send_lock);
+    ret = droplet_send(dest_addr, false, false, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
     ESP_LOGI(TAG, "VSCP heartbeat sent - ret=0x%X", ret);
 
     uint32_t hf = esp_get_free_heap_size();
     heap_caps_check_integrity_all(true);
-    ESP_LOGI(TAG, "---------> VSCP heartbeat sent - ret=0x%X heap=%X", (unsigned int)ret, (unsigned int)hf);
+    ESP_LOGI(TAG, "---------> VSCP heartbeat sent - ret=0x%X heap=%X", (unsigned int) ret, (unsigned int) hf);
 
     ESP_LOGI(TAG, "VSCP heartbeat sent - ret=0x%X", ret);
     vTaskDelay(VSCP_HEART_BEAT_INTERVAL / portTICK_PERIOD_MS);
   }
 
-  
-  //ESP_ERROR_CONTINUE(ret != ESP_OK, "<%s>", esp_err_to_name(ret));
+  // ESP_ERROR_CONTINUE(ret != ESP_OK, "<%s>", esp_err_to_name(ret));
 
 ERROR:
   ESP_LOGW(TAG, "Heartbeat task exit %d", ret);
@@ -1085,8 +1084,8 @@ vscp_espnow_recv_task(void *pvParameter)
 void
 app_main(void)
 {
-  uint8_t dest_addr[ESP_NOW_ETH_ALEN] = {0xff,0xff,0xff,0xff,0xff,0xff};
-  uint8_t buf[DROPLET_MIN_FRAME + 3];  // Three byte data
+  uint8_t dest_addr[ESP_NOW_ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+  uint8_t buf[DROPLET_MIN_FRAME + 3]; // Three byte data
   size_t size = sizeof(buf);
 
   // Initialize NVS partition
@@ -1100,8 +1099,6 @@ app_main(void)
     // Retry nvs_flash_init
     ESP_ERROR_CHECK(nvs_flash_init());
   }
-
-  
 
   // Create message queues  QueueHandle_t tx_msg_queue
   // g_tx_msg_queue = xQueueCreate(ESPNOW_SIZE_TX_BUF, sizeof(vscp_espnow_event_t)); /*< Outgoing esp-now messages */
@@ -1316,7 +1313,7 @@ app_main(void)
 
   // Wait for Wi-Fi connection
   ESP_LOGI(TAG, "Wait for wifi connection...");
-  esp_event_post( /*_to(alpha_loop_handle,*/ ALPHA_EVENT, ALPHA_GET_IP_ADDRESS_START, NULL, 0, portMAX_DELAY);
+  esp_event_post(/*_to(alpha_loop_handle,*/ ALPHA_EVENT, ALPHA_GET_IP_ADDRESS_START, NULL, 0, portMAX_DELAY);
   xEventGroupWaitBits(g_wifi_event_group, WIFI_CONNECTED_EVENT, false, true, portMAX_DELAY);
   esp_event_post(/*_to(alpha_loop_handle,*/ ALPHA_EVENT, ALPHA_GET_IP_ADDRESS_STOP, NULL, 0, portMAX_DELAY);
 
@@ -1324,22 +1321,7 @@ app_main(void)
     ESP_LOGE(TAG, "Failed to start indicator light");
   }
 
-  // Initialize droplet
-  droplet_config_t droplet_config = {
-    .channel = 1,
-    .ttl = 32,
-    .bForwardEnable = true,
-    .bForwardSwitchChannel = false,
-    .sizeQueue = 32,
-    .bFilterAdjacentChannel = false,
-    .filterWeakSignal = false,
-    .pmk = {"01234567890012345678900123456789001"}
-  };
-
-  if (ESP_OK != droplet_init(&droplet_config)) {
-    ESP_LOGI(TAG, "Failed to initialize espnow");
-  }
-  ESP_LOGI(TAG, "espnow initializated");
+  
 
   // Initialize Spiffs for web pages
   ESP_LOGI(TAG, "Initializing SPIFFS");
@@ -1370,8 +1352,25 @@ app_main(void)
   // Start LED controlling tast
   // xTaskCreate(&led_task, "led_task", 1024, NULL, 5, NULL);
 
+  // Initialize droplet
+  droplet_config_t droplet_config = { .channel                = 1,
+                                      .ttl                    = 32,
+                                      .bForwardEnable         = true,
+                                      .bForwardSwitchChannel  = false,
+                                      .sizeQueue              = 32,
+                                      .bFilterAdjacentChannel = false,
+                                      .filterWeakSignal       = false,
+                                      .pmk                    = { "01234567890012345678900123456789001" } };
+
+  if (ESP_OK != droplet_init(&droplet_config)) {
+    ESP_LOGE(TAG, "Failed to initialize espnow");
+  }
+  
+  ESP_LOGI(TAG, "espnow initializated");
+
   // Start heartbeat task vscp_heartbeat_task
   xTaskCreate(&vscp_heartbeat_task, "vscp_heartbeat_task", 2024, NULL, 5, NULL);
+  
 
   // startOTA();
 
@@ -1390,19 +1389,21 @@ app_main(void)
 
   ESP_LOGI(TAG, "Going to work now!");
 
+  // vTaskDelay(5000 / portTICK_PERIOD_MS);
+
   /*
     Start main application loop now
   */
 
- if ( VSCP_ERROR_SUCCESS != (ret = droplet_build_l1_heartbeat(buf, size, g_node_guid))) {
+  if (VSCP_ERROR_SUCCESS != (ret = droplet_build_l1_heartbeat(buf, size, g_node_guid))) {
     ESP_LOGE(TAG, "Could not create heartbeat event, will exit task. VSCP rv %d", ret);
   }
 
-    ret = droplet_send(dest_addr, true, 4, buf, DROPLET_MIN_FRAME + 3, 1000/portTICK_PERIOD_MS);
+  ret = droplet_send(dest_addr, false, true, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
 
   while (1) {
     // esp_task_wdt_reset();
-    ESP_LOGI(TAG, "Ctrl - Loop");    
+    ESP_LOGI(TAG, "Ctrl - Loop");
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 

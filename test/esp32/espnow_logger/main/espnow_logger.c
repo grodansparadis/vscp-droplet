@@ -143,7 +143,9 @@ logger_task(void *pvParameter)
       case LOGGER_RECV_CB: {
         logger_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
         printf("-------------------------------------------------------------------------------------------\n");
-        printf("Receive %dth broadcast data from: " MACSTR " \n len: %d "
+        printf("Receive %dth broadcast data from: " MACSTR " \n" 
+                "To " MACSTR "\n" 
+               "len: %d "
                "pktid = %d "
                "ttl = %d, "
                "magic = %02X%02X, "
@@ -153,6 +155,7 @@ logger_task(void *pvParameter)
                "type = %02X%02X data-len = %d\n",
                recv_seq,
                MAC2STR(recv_cb->mac_addr),
+               MAC2STR(recv_cb->data + DROPLET_POS_DEST_ADDR),
                recv_cb->data_len,
                recv_cb->data[DROPLET_POS_PKTID],      // pktid
                recv_cb->data[DROPLET_POS_TTL],       // ttl

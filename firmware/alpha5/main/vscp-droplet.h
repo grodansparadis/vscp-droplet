@@ -53,39 +53,40 @@
 extern "C" {
 #endif
 
-#define DROPLET_MIN_FRAME 13  // Number of bytes in minimum frame
+#define DROPLET_MIN_FRAME 19  // Number of bytes in minimum frame
 #define DROPLET_MAX_DATA  128 // Max VSCP data (of possible 512 bytes) that a frame can hold
 #define DROPLET_MAX_FRAME DROPLET_MIN_FRAME + DROPLET_MAX_DATA
 
 /**
  * @brief Frame positions for data in the VSCP droplet frame
  */
-#define DROPLET_POS_PKTID  0 // Frame id (1)
-#define DROPLET_POS_TTL 1 // Time to live
+#define DROPLET_POS_PKTID 0 // Frame id (1)
+#define DROPLET_POS_TTL   1 // Time to live
 // magic and crc form unique number that identify a frame
 // in the frame cache. id/ttl is not part of crc as ttl can
 // vary for the same frame (if forwarded)
 #define DROPLET_POS_MAGIC 2 // Frame random number (2)
 
+#define DROPLET_POS_DEST_ADDR 4   // Destination address for frame
+
 // VSCP content
-#define DROPLET_POS_HEAD     4 // VSCP head bytes (2)
-#define DROPLET_POS_NICKNAME 6 // Node nickname (2)
-#define DROPLET_POS_CLASS    8 // VSCP class (2)
-#define DROPLET_POS_TYPE     10 // VSCP Type (2)
-#define DROPLET_POS_SIZE     12 // Data size (needed because of encryption padding)
-#define DROPLET_POS_DATA     13 // VSCP data (max 128 bytes)
+#define DROPLET_POS_HEAD     10  // VSCP head bytes (2)
+#define DROPLET_POS_NICKNAME 12  // Node nickname (2)
+#define DROPLET_POS_CLASS    14  // VSCP class (2)
+#define DROPLET_POS_TYPE     16 // VSCP Type (2)
+#define DROPLET_POS_SIZE     18 // Data size (needed because of encryption padding)
+#define DROPLET_POS_DATA     19 // VSCP data (max 128 bytes)
 
 /**
  * @brief Initialize the configuration of droplet
  */
 typedef struct {
-  uint8_t channel;             // Channel to use (zero is current)
-  uint8_t ttl;                 // Default ttl 
-  bool bForwardEnable;         // Forward when packets are received 
-  bool bForwardSwitchChannel;  // Forward data packet with exchange channel 
-  uint8_t sizeQueue;           // Size of packet buffer queue 
-  //bool bSecEnable;             // Encrypt droplet data payload when send and decrypt when receive 
-  uint8_t nEncryptionCode;     // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256  
+  uint8_t channel;            // Channel to use (zero is current)
+  uint8_t ttl;                // Default ttl
+  bool bForwardEnable;        // Forward when packets are received
+  bool bForwardSwitchChannel; // Forward data packet with exchange channel
+  uint8_t sizeQueue;        // Size of receive queue
+  uint8_t nEncryptionCode;     // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256
   bool bFilterAdjacentChannel; // Don't receive if from other channel
   int filterWeakSignal;        // Filter onm RSSI (zero is no rssi filtering)
   const uint8_t pmk[32];       // Primary master key (16 (EAS128)/24(AES192)/32(AES256))
@@ -236,6 +237,7 @@ droplet_sec_auth_decrypt(const uint8_t *input,
  * @brief Send droplet frame
  *
  * @param dest_addr Destination max address
+ * @param bPreserveHeader Will leave pktid, ttl and magic unchanged.
  * @param bEncrypt  Set to true for encrypted content
  * @param ttl Time to live for frame. Set tpo zero for no node hop
  * @param data  VSCP data to send | vscp-head | vscp-nickname | vscp-class | vscp-type | vscp-data |
@@ -245,7 +247,7 @@ droplet_sec_auth_decrypt(const uint8_t *input,
  */
 
 esp_err_t
-droplet_send(const uint8_t *dest_addr, bool bEncrypt, uint8_t ttl, uint8_t *data, size_t size, TickType_t wait_ticks);
+droplet_send(const uint8_t *dest_addr, bool bPreserveHeader, bool bEncrypt, uint8_t ttl, uint8_t *data, size_t size, TickType_t wait_ticks);
 
 /**
  * @brief Build full GUID from mac address
