@@ -67,12 +67,12 @@ extern "C" {
 // vary for the same frame (if forwarded)
 #define DROPLET_POS_MAGIC 2 // Frame random number (2)
 
-#define DROPLET_POS_DEST_ADDR 4   // Destination address for frame
+#define DROPLET_POS_DEST_ADDR 4 // Destination address for frame
 
 // VSCP content
-#define DROPLET_POS_HEAD     10  // VSCP head bytes (2)
-#define DROPLET_POS_NICKNAME 12  // Node nickname (2)
-#define DROPLET_POS_CLASS    14  // VSCP class (2)
+#define DROPLET_POS_HEAD     10 // VSCP head bytes (2)
+#define DROPLET_POS_NICKNAME 12 // Node nickname (2)
+#define DROPLET_POS_CLASS    14 // VSCP class (2)
 #define DROPLET_POS_TYPE     16 // VSCP Type (2)
 #define DROPLET_POS_SIZE     18 // Data size (needed because of encryption padding)
 #define DROPLET_POS_DATA     19 // VSCP data (max 128 bytes)
@@ -81,11 +81,11 @@ extern "C" {
  * @brief Initialize the configuration of droplet
  */
 typedef struct {
-  uint8_t channel;            // Channel to use (zero is current)
-  uint8_t ttl;                // Default ttl
-  bool bForwardEnable;        // Forward when packets are received
-  bool bForwardSwitchChannel; // Forward data packet with exchange channel
-  uint8_t sizeQueue;        // Size of receive queue
+  uint8_t channel;             // Channel to use (zero is current)
+  uint8_t ttl;                 // Default ttl
+  bool bForwardEnable;         // Forward when packets are received
+  bool bForwardSwitchChannel;  // Forward data packet with exchange channel
+  uint8_t sizeQueue;           // Size of receive queue
   uint8_t nEncryptionCode;     // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256
   bool bFilterAdjacentChannel; // Don't receive if from other channel
   int filterWeakSignal;        // Filter onm RSSI (zero is no rssi filtering)
@@ -138,6 +138,9 @@ typedef enum {
 #define DROPLET_ADDR_IS_SELF(addr)          !memcmp(addr, DROPLET_ADDR_SELF, 6)
 #define DROPLET_ADDR_IS_EQUAL(addr1, addr2) !memcmp(addr1, addr2, 6)
 
+// Callback functions
+typedef void (*vscp_event_handler_cb_t)(const vscpEventEx *pex, void *userdata);
+
 // ----------------------------------------------------------------------------
 
 /**
@@ -148,6 +151,60 @@ typedef enum {
  */
 esp_err_t
 droplet_init(const droplet_config_t *config);
+
+/**
+ * @brief Send droplet frame
+ * 
+ * @param dest_addr Pointer to destination mac address. Normally broadcast 0xff,0xff,0xff,0xff,0xff,0xff 
+ * @param bPreserveHeader Set to true if header is already set in payload and need to be preserved. If false
+ *                        ttl , magic etc will be set by the routine.
+ * @param bEncrypt  Set to tru to encrypt the frame. Frame size will increase by 16 as the iv is appended to 
+ *                  the end of it.
+ * @param ttl   Time to live for frame. Will be decrease for every hop.
+ * @param payload The frame data- 
+ * @param size  The size of the payload-
+ * @param wait_ticks Ticks to wait for the frame to get sent.
+ * @return esp_err_t ESP_OK is returned if all is OK
+ */
+esp_err_t
+droplet_send(const uint8_t *dest_addr,
+             bool bPreserveHeader,
+             bool bEncrypt,
+             uint8_t ttl,
+             uint8_t *data,
+             size_t size,
+             TickType_t wait_ticks);
+
+/**
+ * @brief Set VSCP handler event callback
+ * 
+ * @param cb Callback
+ * 
+ * Calls a VSCP event callback for further handling when a valid event 
+ * is received, 
+ * 
+ */
+void droplet_set_vscp_handler_cb(vscp_event_handler_cb_t  *cb);
+
+/**
+ * @brief 
+ * 
+ * @param jsonVscpEventObj 
+ * @param pex 
+ * @return int 
+ */
+int
+droplet_parse_vscp_json(const char *jsonVscpEventObj, vscpEventEx *pex);
+
+/**
+ * @brief 
+ * 
+ * @param strObj 
+ * @param pex 
+ * @return int 
+ */
+int
+droplet_create_vscp_json(char *strObj, vscpEventEx *pex);
 
 // ----------------------------------------------------------------------------
 
@@ -247,7 +304,13 @@ droplet_sec_auth_decrypt(const uint8_t *input,
  */
 
 esp_err_t
-droplet_send(const uint8_t *dest_addr, bool bPreserveHeader, bool bEncrypt, uint8_t ttl, uint8_t *data, size_t size, TickType_t wait_ticks);
+droplet_send(const uint8_t *dest_addr,
+             bool bPreserveHeader,
+             bool bEncrypt,
+             uint8_t ttl,
+             uint8_t *data,
+             size_t size,
+             TickType_t wait_ticks);
 
 /**
  * @brief Build full GUID from mac address

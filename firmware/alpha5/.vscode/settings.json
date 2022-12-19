@@ -89,6 +89,13 @@
     "ostream": "c",
     "ranges": "c",
     "aes.h": "c",
-    "vscp_aes.h": "c"
+    "vscp_aes.h": "c",
+    "string": "c",
+    "string_view": "c",
+    "span": "c",
+    "bitset": "c",
+    "initializer_list": "c",
+    "regex": "c",
+    "valarray": "c"
   }
 }

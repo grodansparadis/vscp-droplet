@@ -1,5 +1,7 @@
 /*
-  VSCP Wireless CAN4VSCP Gateway (VSCP-WCANG)
+  VSCP Alpha Droplet node
+
+  Web Server
 
   This file is part of the VSCP (https://www.vscp.org)
 

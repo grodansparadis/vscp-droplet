@@ -29,6 +29,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <dirent.h>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -60,6 +61,7 @@
 #include <lwip/sockets.h>
 
 #include "websrv.h"
+#include "mqtt.h"
 
 #include <vscp.h>
 #include <vscp_class.h>
@@ -945,21 +947,14 @@ vscp_heartbeat_task(void *pvParameter)
 
   ESP_LOGI(TAG, "Start sending VSCP heartbeats");
 
-  while (1) {
+  while (true) {
 
-    //   // if (pthread_mutex_lock(&g_espnow_send_mutex) == 0){
-    //   if (xSemaphoreTake(g_send_lock, (TickType_t)100)) {
-    //     ret = espnow_send(ESPNOW_TYPE_DATA, dest_mac, buf, size, &frame_head, portMAX_DELAY);
-    //     ret = esp_now_send(dest_mac, buf, size);
-    //     xSemaphoreGive(g_send_lock);
     ret = droplet_send(dest_addr, false, false, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
-    ESP_LOGI(TAG, "VSCP heartbeat sent - ret=0x%X", ret);
 
-    uint32_t hf = esp_get_free_heap_size();
-    heap_caps_check_integrity_all(true);
-    ESP_LOGI(TAG, "---------> VSCP heartbeat sent - ret=0x%X heap=%X", (unsigned int) ret, (unsigned int) hf);
+    // uint32_t hf = esp_get_free_heap_size();
+    // heap_caps_check_integrity_all(true);
+    // ESP_LOGI(TAG, "VSCP heartbeat sent - ret=0x%X heap=%X", (unsigned int) ret, (unsigned int) hf);
 
-    ESP_LOGI(TAG, "VSCP heartbeat sent - ret=0x%X", ret);
     vTaskDelay(VSCP_HEART_BEAT_INTERVAL / portTICK_PERIOD_MS);
   }
 
@@ -967,113 +962,6 @@ vscp_heartbeat_task(void *pvParameter)
 
 ERROR:
   ESP_LOGW(TAG, "Heartbeat task exit %d", ret);
-  vTaskDelete(NULL);
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// vscp_espnow_send_task
-//
-
-static void
-vscp_espnow_send_task(void *pvParameter)
-{
-  // vscp_espnow_event_post_t evt;
-  // esp_err_t ret = 0;
-  // uint8_t dest_mac[ESP_NOW_ETH_ALEN]; // MAC address of destination device.
-  // vscp_espnow_event_t vscpEspNowEvent;
-  // uint8_t buf[VSCP_ESPNOW_PACKET_MAX_SIZE];
-  // static int cnt = 0;
-
-  // // vTaskDelay(5000 / portTICK_PERIOD_MS);
-  // ESP_LOGI(TAG, "Start sending broadcast data");
-
-  // // vscpEventToEspNowBuf(buf, sizeof(buf), &vscpEspNowEvent);
-
-  // // ESP_LOGI(TAG, "Before broadcast send");
-
-  // espnow_frame_head_t frame_head = {
-  //   .channel          = 11,
-  //   .retransmit_count = 1,
-  //   .broadcast        = true,
-  //   .forward_ttl      = 7,
-  //   .ack              = 0,
-  // };
-
-  // while (1) {
-
-  //   // esp_task_wdt_reset();
-
-  //   // if (pthread_mutex_lock(&g_espnow_send_mutex) == 0){
-  //   if (xSemaphoreTake(g_send_lock, (TickType_t) 200)) {
-  //     // if (g_send_state.state == VSCP_SEND_STATE_NONE) {
-  //     memcpy(dest_mac, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN);
-  //     // ret = esp_now_send(dest_mac, buf, VSCP_ESPNOW_PACKET_MIN_SIZE);
-  //     ret = espnow_send(ESPNOW_TYPE_DATA,
-  //                       dest_mac,
-  //                       buf,
-  //                       VSCP_ESPNOW_PACKET_MIN_SIZE, //+ vscpEspNowEvent.len,
-  //                       &frame_head,
-  //                       portMAX_DELAY);
-  //     // g_send_state.state = VSCP_SEND_STATE_SENT;
-  //     // g_send_state.timestamp = esp_timer_get_time();
-  //     uint32_t hf = esp_get_free_heap_size();
-  //     // heap_caps_check_integrity_all(true);
-  //     ESP_LOGI(TAG, "Broadcast sent - ret=0x%X heap=%X", ret, hf);
-  //     // g_send_state.state = VSCP_SEND_STATE_NONE;
-  //     // g_send_state.timestamp = esp_timer_get_time();
-  //     //}
-  //     // Check for timeout
-  //     // else if ((g_send_state.state ==VSCP_SEND_STATE_SENT) && ((esp_timer_get_time() - g_send_state.timestamp) >
-  //     // 5000000L) ){
-  //     //   ESP_LOGI(TAG, "Send timout");
-  //     //   g_send_state.state = VSCP_SEND_STATE_NONE;
-  //     //   g_send_state.timestamp = esp_timer_get_time();
-  //     // }
-  //     // else if (g_send_state.state ==VSCP_SEND_STATE_SEND_CONFIRM ){
-  //     //   ESP_LOGI(TAG, "Send Confirm reset");
-  //     //   g_send_state.state = VSCP_SEND_STATE_NONE;
-  //     //   g_send_state.timestamp = esp_timer_get_time();
-  //     // }
-
-  //     // pthread_mutex_unlock(&g_espnow_send_mutex);
-  //     xSemaphoreGive(g_send_lock);
-
-  //     // ESP_ERROR_BREAK(ret != ESP_OK, "<%s>", esp_err_to_name(ret));
-  //   }
-
-  //   vTaskDelay(10 / portTICK_PERIOD_MS);
-  //   vTaskDelay(5000 / portTICK_PERIOD_MS);
-  // }
-
-  vTaskDelete(NULL);
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// vscp_espnow_receive_task
-//
-
-void
-vscp_espnow_recv_task(void *pvParameter)
-{
-  esp_err_t ret = 0;
-  // char *data                    = ESP_MALLOC(ESPNOW_DATA_LEN);
-  // size_t size                   = ESPNOW_DATA_LEN;
-  // uint8_t addr[ESPNOW_ADDR_LEN] = { 0 };
-  // wifi_pkt_rx_ctrl_t rx_ctrl    = { 0 };
-
-  // ESP_LOGI(TAG, "Receive task started --->");
-
-  // // vTaskDelay(4000 / portTICK_PERIOD_MS);
-
-  // for (;;) {
-  //   esp_task_wdt_reset();
-  //   ret = espnow_recv(ESPNOW_TYPE_DATA, addr, data, &size, &rx_ctrl, 5000 / portTICK_PERIOD_MS); //
-  //   ESP_ERROR_CONTINUE(ret != ESP_OK, MACSTR ",  error: <%s>", MAC2STR(addr), esp_err_to_name(ret));
-  //   ESP_LOGI(TAG, "Data from " MACSTR " Data size=%d", MAC2STR(addr), size);
-  // }
-
-  ESP_LOGW(TAG, "Receive task exit %d", ret);
-  // ESP_FREE(data);
   vTaskDelete(NULL);
 }
 
@@ -1209,6 +1097,8 @@ app_main(void)
     length = 16;
     rv     = nvs_get_blob(g_nvsHandle, "guid", g_node_guid, &length);
 
+    length = rv = nvs_get_blob(g_nvsHandle, "discovery-cache", g_node_guid, &length);
+
     // If GUID is all zero construct VSCP GUID
     if (!(g_node_guid[0] | g_node_guid[1] | g_node_guid[2] | g_node_guid[3] | g_node_guid[4] | g_node_guid[5] |
           g_node_guid[6] | g_node_guid[7] | g_node_guid[8] | g_node_guid[9] | g_node_guid[10] | g_node_guid[11] |
@@ -1321,8 +1211,6 @@ app_main(void)
     ESP_LOGE(TAG, "Failed to start indicator light");
   }
 
-  
-
   // Initialize Spiffs for web pages
   ESP_LOGI(TAG, "Initializing SPIFFS");
 
@@ -1347,7 +1235,44 @@ app_main(void)
     return;
   }
 
+  ESP_LOGI(TAG, "Performing SPIFFS_check().");
+  ret = esp_spiffs_check(spiffsconf.partition_label);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "SPIFFS_check() failed (%s)", esp_err_to_name(ret));
+    return;
+  }
+  else {
+    ESP_LOGI(TAG, "SPIFFS_check() successful");
+  }
+
   ESP_LOGI(TAG, "SPIFFS for web initialized");
+
+  size_t total = 0, used = 0;
+  ret = esp_spiffs_info(spiffsconf.partition_label, &total, &used);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to get SPIFFS partition information (%s). Formatting...", esp_err_to_name(ret));
+    esp_spiffs_format(spiffsconf.partition_label);
+    return;
+  }
+  else {
+    ESP_LOGI(TAG, "Partition size: total: %d, used: %d", total, used);
+  }
+
+  DIR *dir = opendir("/spiffs");
+  if (dir == NULL) {
+    return;
+  }
+
+  while (true) {
+    struct dirent *de = readdir(dir);
+    if (!de) {
+      break;
+    }
+
+    printf("Found file: %s\n", de->d_name);
+  }
+
+  closedir(dir);
 
   // Start LED controlling tast
   // xTaskCreate(&led_task, "led_task", 1024, NULL, 5, NULL);
@@ -1365,17 +1290,16 @@ app_main(void)
   if (ESP_OK != droplet_init(&droplet_config)) {
     ESP_LOGE(TAG, "Failed to initialize espnow");
   }
-  
+
   ESP_LOGI(TAG, "espnow initializated");
 
   // Start heartbeat task vscp_heartbeat_task
   xTaskCreate(&vscp_heartbeat_task, "vscp_heartbeat_task", 2024, NULL, 5, NULL);
-  
 
   // startOTA();
 
-  xTaskCreate(vscp_espnow_send_task, "vscp_espnow_send_task", 4096, NULL, 4, NULL);
-  xTaskCreate(vscp_espnow_recv_task, "vscp_espnow_recv_task", 2048, NULL, 4, NULL);
+  // xTaskCreate(vscp_espnow_send_task, "vscp_espnow_send_task", 4096, NULL, 4, NULL);
+  // xTaskCreate(vscp_espnow_recv_task, "vscp_espnow_recv_task", 2048, NULL, 4, NULL);
 
   // Start the VSCP Link Protocol Server
 #ifdef CONFIG_EXAMPLE_IPV6
@@ -1386,6 +1310,9 @@ app_main(void)
 
   // Start web server
   httpd_handle_t server = start_webserver();
+
+  // Start MQTT
+  mqtt_start();
 
   ESP_LOGI(TAG, "Going to work now!");
 
@@ -1401,9 +1328,25 @@ app_main(void)
 
   ret = droplet_send(dest_addr, false, true, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
 
+  const char *obj = "{"
+     "\"vscpHead\": 2,"
+     "\"vscpObId\": 123,"
+     "\"vscpDateTime\": \"2017-01-13T10:16:02\","
+     "\"vscpTimeStamp\":50817,"
+     "\"vscpClass\": 10,"
+     "\"vscpType\": 8,"
+     "\"vscpGuid\": \"00:00:00:00:00:00:00:00:00:00:00:00:00:01:00:02\","
+     "\"vscpData\": [1,2,3,4,5,6,7],"
+     "\"note\": \"This is some text\""
+  "}";
+
+vscpEventEx ex;
+droplet_parse_vscp_json(obj, &ex);
+char str[512];
+droplet_create_vscp_json(str, &ex);
+
   while (1) {
     // esp_task_wdt_reset();
-    ESP_LOGI(TAG, "Ctrl - Loop");
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 
