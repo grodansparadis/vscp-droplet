@@ -3,7 +3,7 @@ div,
     input,
     select {
       padding: 5px;
-      font-size: 1em;
+      font-size: 1.2em;
     }
 
     fieldset {
@@ -56,15 +56,13 @@ div,
       background: #252525;
     }
 
-    td {
-      padding: 0px;
-    }
+    
 
     button {
-      border: 0;
-      border-radius: 0.3rem;
-      background: #c9d61452;
-      color: #faffff;
+      border: 1;
+      border-radius: 0.5rem;
+      background: #f7f1a6;
+      color: #000000;
       line-height: 2.4rem;
       font-size: 1.2rem;
       width: 100%;
@@ -117,4 +115,31 @@ div,
     .hf {
       display: none;
     }
+
+/* Property tables as info*/
+
+td {
+  padding-left: 30px;
+  padding-right: 15px;
+}
+
+.name {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: larger;
+  font-weight: bold;
+  color: #2c54aa;
+}    
+.prop {
+   font-family: Arial, Helvetica, sans-serif;
+   font-size: normal;
+   font-weight: lighter;
+   color: #a7aca7;
+}   
+
+.infoheader {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: normal;
+  font-weight: lighter;
+  color: #f7f1a6;
+}
     

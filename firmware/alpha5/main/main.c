@@ -95,6 +95,12 @@ static const char *TAG = "alpha";
 extern const uint8_t server_cert_pem_start[] asm("_binary_ca_cert_pem_start");
 extern const uint8_t server_cert_pem_end[] asm("_binary_ca_cert_pem_end");
 
+// Counter for reboots
+uint32_t g_boot_counter;
+
+// The net interface
+esp_netif_t *g_netif = NULL;
+
 // Holds alpha node states
 alpha_node_states_t g_state = MAIN_STATE_INIT;
 
@@ -860,14 +866,14 @@ system_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, v
 
       case WIFI_EVENT_AP_STACONNECTED: {
         wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *) event_data;
-        // ESP_LOGI(TAG, "station " MACSTR " join, AID=%d", MAC2STR(event->mac), (int)event->aid);
+        //ESP_LOGI(TAG, "station " MACSTR " join, AID=%d", MAC2STR(event->mac), (int)event->aid);
         s_ap_staconnected_flag = true;
         break;
       }
 
       case WIFI_EVENT_AP_STADISCONNECTED: {
         wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *) event_data;
-        // ESP_LOGI(TAG, "station " MACSTR " leave, AID=%d", MAC2STR(event->mac), ((int)event->aid);
+        //ESP_LOGI(TAG, "station " MACSTR " leave, AID=%d", MAC2STR(event->mac), ((int)event->aid);
         s_ap_staconnected_flag = false;
         break;
       }
@@ -875,11 +881,11 @@ system_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, v
       case WIFI_EVENT_STA_CONNECTED: {
         wifi_event_sta_connected_t *event = (wifi_event_sta_connected_t *) event_data;
         char *ttt                         = MACSTR;
-        // ESP_LOGI(TAG,
-        //          "Connected to %s (BSSID: " MACSTR ", Channel: %d)",
-        //          event->ssid,
-        //          MAC2STR(event->bssid),
-        //          event->channel);
+        ESP_LOGI(TAG,
+                 "Connected to %s (BSSID: " MACSTR ", Channel: %d)",
+                 event->ssid,
+                 MAC2STR(event->bssid),
+                 event->channel);
         s_sta_connected_flag = true;
         break;
       }
@@ -898,7 +904,7 @@ system_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, v
     ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
     ESP_LOGI(TAG, "Connected with IP Address: " IPSTR, IP2STR(&event->ip_info.ip));
     g_state = MAIN_STATE_WORK;
-    /* Signal main application to continue execution */
+    // Signal main application to continue execution 
     xEventGroupSetBits(g_wifi_event_group, WIFI_CONNECTED_EVENT);
   }
   else if (event_base == ALPHA_EVENT) {
@@ -1044,14 +1050,14 @@ app_main(void)
   else {
 
     // Read
-    ESP_LOGI(TAG, "Reading restart counter from NVS ... ");
-    int32_t restart_counter = 0; // value will default to 0, if not set yet in NVS
+    ESP_LOGI(TAG, "Reading boot counter from NVS ... ");
+    g_boot_counter = 0; // value will default to 0, if not set yet in NVS
 
-    rv = nvs_get_i32(g_nvsHandle, "restart_counter", &restart_counter);
+    rv = nvs_get_u32(g_nvsHandle, "boot_counter", &g_boot_counter);
     switch (rv) {
 
       case ESP_OK:
-        ESP_LOGI(TAG, "Restart counter = %d\n", (int) restart_counter);
+        ESP_LOGI(TAG, "Boot counter = %d\n", (int)g_boot_counter);
         break;
 
       case ESP_ERR_NVS_NOT_FOUND:
@@ -1063,9 +1069,9 @@ app_main(void)
     }
 
     // Write
-    ESP_LOGI(TAG, "Updating restart counter in NVS ... ");
-    restart_counter++;
-    rv = nvs_set_i32(g_nvsHandle, "restart_counter", restart_counter);
+    ESP_LOGI(TAG, "Updating boot counter in NVS ... ");
+    g_boot_counter++;
+    rv = nvs_set_u32(g_nvsHandle, "boot_counter", g_boot_counter);
     if (rv != ESP_OK) {
       ESP_LOGI(TAG, "Failed!\n");
     }
@@ -1163,11 +1169,11 @@ app_main(void)
                                                            NULL)); */
 
   // Initialize Wi-Fi including netif with default config
-  esp_netif_create_default_wifi_sta();
+  g_netif = esp_netif_create_default_wifi_sta();
 
-#ifdef CONFIG_PROV_TRANSPORT_SOFTAP
-  esp_netif_create_default_wifi_ap();
-#endif // CONFIG_PROV_TRANSPORT_SOFTAP
+// #ifdef CONFIG_PROV_TRANSPORT_SOFTAP
+//   g_netif = esp_netif_create_default_wifi_ap();  
+// #endif // CONFIG_PROV_TRANSPORT_SOFTAP
 
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -1344,6 +1350,8 @@ vscpEventEx ex;
 droplet_parse_vscp_json(obj, &ex);
 char str[512];
 droplet_create_vscp_json(str, &ex);
+
+  //test();
 
   while (1) {
     // esp_task_wdt_reset();

@@ -71,6 +71,8 @@
 #define DROPLET_MSG_CACHE_SIZE       32
 #define DROPLET_DISCOVERY_CACHE_SIZE 64
 
+
+
 static const char *TAG                   = "vscp_droplet_alpha";
 static bool g_set_channel_flag           = true;
 static droplet_config_t g_droplet_config = { 0 };
@@ -1002,18 +1004,7 @@ droplet_frameToEx(vscpEventEx *pex, const uint8_t *buf, uint8_t len, uint32_t ti
 ///////////////////////////////////////////////////////////////////////////////
 // droplet_parse_vscp_json
 //
-// {
-//     "vscpHead": 2,
-//     "vscpObId": 123,
-//     "vscpDateTime": "2017-01-13T10:16:02",
-//     "vscpTimeStamp":50817,
-//     "vscpClass": 10,
-//     "vscpType": 8,
-//     "vscpGuid": "00:00:00:00:00:00:00:00:00:00:00:00:00:01:00:02",
-//     "vscpData": [1,2,3,4,5,6,7],
-//     "note": "This is some text"
-// }
-//
+// // https://github.com/nopnop2002/esp-idf-json
 /*
 {
   "vscpHead":3,
@@ -1043,19 +1034,19 @@ droplet_parse_vscp_json(const char *jsonVscpEventObj, vscpEventEx *pex)
 
   if (cJSON_GetObjectItem(root, "vscpHead")) {
     pex->head = (uint16_t) cJSON_GetObjectItem(root, "vscpHead")->valueint;
-    ESP_LOGI(TAG, "vscpHead=%u", pex->head);
+    ESP_LOGD(TAG, "vscpHead=%u", pex->head);
   }
 
   if (cJSON_GetObjectItem(root, "vscpObId")) {
     pex->obid = (uint32_t) cJSON_GetObjectItem(root, "vscpObId")->valuedouble;
-    ESP_LOGI(TAG, "pex->obid=%lu", pex->obid);
+    ESP_LOGD(TAG, "pex->obid=%lu", pex->obid);
   }
 
   // "2017-01-13T10:16:02",
   if (cJSON_GetObjectItem(root, "vscpDateTime")) {
     int year, month, day, hour, minute, second;
     const char *str = cJSON_GetObjectItem(root, "vscpDateTime")->valuestring;
-    ESP_LOGI(TAG, "vscpDateTime=%s", str);
+    ESP_LOGD(TAG, "vscpDateTime=%s", str);
     sscanf(str, "%d-%d-%dT%d:%d:%d", &year, &month, &day, &hour, &minute, &second);
     pex->year   = year;
     pex->month  = month;
@@ -1063,43 +1054,43 @@ droplet_parse_vscp_json(const char *jsonVscpEventObj, vscpEventEx *pex)
     pex->hour   = hour;
     pex->minute = minute;
     pex->second = second;
-    ESP_LOGI(TAG, "%d-%02d-%02dT%02d:%02d:%02d", pex->year, pex->month, pex->day, pex->hour, pex->minute, pex->second);
+    ESP_LOGD(TAG, "%d-%02d-%02dT%02d:%02d:%02d", pex->year, pex->month, pex->day, pex->hour, pex->minute, pex->second);
   }
 
   if (cJSON_GetObjectItem(root, "vscpTimeStamp")) {
     pex->timestamp = (uint32_t) cJSON_GetObjectItem(root, "vscpTimeStamp")->valuedouble;
-    ESP_LOGI(TAG, "vscpTimeStamp=%lu", pex->timestamp);
+    ESP_LOGD(TAG, "vscpTimeStamp=%lu", pex->timestamp);
   }
 
   if (cJSON_GetObjectItem(root, "vscpClass")) {
     pex->vscp_class = (uint16_t) cJSON_GetObjectItem(root, "vscpClass")->valueint;
-    ESP_LOGI(TAG, "vscpClass=%u", pex->vscp_class);
+    ESP_LOGD(TAG, "vscpClass=%u", pex->vscp_class);
   }
 
   if (cJSON_GetObjectItem(root, "vscpType")) {
     pex->vscp_type = (uint16_t) cJSON_GetObjectItem(root, "vscpType")->valueint;
-    ESP_LOGI(TAG, "vscpType=%u", pex->vscp_type);
+    ESP_LOGD(TAG, "vscpType=%u", pex->vscp_type);
   }
 
   if (cJSON_GetObjectItem(root, "vscpGuid")) {
     const char *str = cJSON_GetObjectItem(root, "vscpGuid")->valuestring;
     if (VSCP_ERROR_SUCCESS != (rv = vscp_fwhlp_parseGuid(pex->GUID, str, NULL))) {
-      ESP_LOGI(TAG, "Failed to parse GUID");
+      ESP_LOGD(TAG, "Failed to parse GUID");
       return rv;
     }
-    ESP_LOGI(TAG, "vscpGuid=%s", str);
+    ESP_LOGD(TAG, "vscpGuid=%s", str);
   }
 
   if (cJSON_GetObjectItem(root, "vscpData")) {
 
     cJSON *pdata = cJSON_GetObjectItem(root, "vscpData");
     pex->sizeData     = cJSON_GetArraySize(pdata);
-    ESP_LOGI(TAG, "VSCP data size=%d", pex->sizeData);
+    ESP_LOGD(TAG, "VSCP data size=%d", pex->sizeData);
     for (int i = 0; i < pex->sizeData; i++) {
       cJSON *pitem = cJSON_GetArrayItem(pdata, i);
       if (pitem->type == cJSON_Number && i < 512) {
         pex->data[i] = pitem->valueint;
-        ESP_LOGI(TAG, "data%d=%u", i, pitem->valueint);
+        ESP_LOGD(TAG, "data%d=%u", i, pitem->valueint);
       }
     }
 
@@ -1110,7 +1101,11 @@ droplet_parse_vscp_json(const char *jsonVscpEventObj, vscpEventEx *pex)
   return VSCP_ERROR_SUCCESS;
 }
 
+///////////////////////////////////////////////////////////////////////////////
+// droplet_parse_vscp_json
+//
 // https://github.com/nopnop2002/esp-idf-json
+//
 
 int
 droplet_create_vscp_json(char *strObj, vscpEventEx *pex)
@@ -1131,14 +1126,13 @@ droplet_create_vscp_json(char *strObj, vscpEventEx *pex)
   cJSON *array;
   array = cJSON_AddArrayToObject(root, "vscpData");
   cJSON *element;
-  printf("%d\n", pex->sizeData);
   for (int i = 0; i < pex->sizeData; i++) {
     element = cJSON_CreateNumber(pex->data[i]);
     cJSON_AddItemToArray(array, element);
   }
   char *json_string = cJSON_Print(root);
   if (NULL != json_string) {
-    ESP_LOGI(TAG, "%s", json_string);
+    ESP_LOGD(TAG, "%s", json_string);
     strcpy(strObj, json_string);   
   }
   cJSON_free(json_string);

@@ -51,6 +51,8 @@ typedef struct {
 
 #define HTTPD_401      "401 UNAUTHORIZED"           /*!< HTTP Response 401 */
 
+void test();
+
 /*!
   Start the webserver
   @return esp error code
