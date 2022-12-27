@@ -60,6 +60,8 @@
 #include <esp_spiffs.h>
 #include <lwip/sockets.h>
 
+#include <esp_crt_bundle.h>
+
 #include "websrv.h"
 #include "mqtt.h"
 
@@ -291,9 +293,11 @@ ota_task(void *pvParameter)
   esp_http_client_config_t config_http = {
     //.url               = "http://192.168.1.7:80/hello_world.bin", //
     //"https://eurosource.se:443/download/alpha/hello-world.bin", // CONFIG_FIRMWARE_UPGRADE_URL,
-    .url = "http://185.144.156.45:80/hello_world.bin", // vscp2
+    //.url = "http://185.144.156.45:80/hello_world.bin", // vscp1
+    .url = "http://185.144.156.45:80/vscp_espnow_alpha.bin",
     //.url               = "https://185.144.156.54:443/hello_world.bin", // vscp2
-    .cert_pem          = (char *) server_cert_pem_start,
+    //.cert_pem          = (char *) server_cert_pem_start,
+    .crt_bundle_attach = esp_crt_bundle_attach,
     .event_handler     = _http_event_handler,
     .keep_alive_enable = true,
 #ifdef CONFIG_EXAMPLE_FIRMWARE_UPGRADE_BIND_IF
@@ -308,7 +312,7 @@ ota_task(void *pvParameter)
   esp_https_ota_config_t config = {
     .http_config           = &config_http,
     .bulk_flash_erase      = true,
-    .partial_http_download = true,
+    .partial_http_download = false,
     //.max_http_request_size
   };
 
@@ -445,7 +449,7 @@ button_long_press_hold_cb(void *arg, void *data)
 //
 
 void
-startOTA()
+startOTA(void)
 {
   xTaskCreate(&ota_task, "ota_task", 8192, NULL, 5, NULL);
 }
@@ -744,11 +748,11 @@ get_device_guid(uint8_t *pguid)
       break;
 
     case ESP_ERR_NVS_NOT_FOUND:
-      printf("Username not found in nvs\n");
+      printf("GUID not found in nvs\n");
       return false;
 
     default:
-      printf("Error (%s) reading username f900rom nvs!\n", esp_err_to_name(rv));
+      printf("Error (%s) reading GUID from nvs!\n", esp_err_to_name(rv));
       return false;
   }
 
@@ -900,6 +904,47 @@ system_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, v
       }
     }
   }
+  // Post 5.0 stable
+  // ---------------
+  // else if (event_base == ESP_HTTPS_OTA_EVENT) {
+  //   switch (event_id) {
+
+  //     case ESP_HTTPS_OTA_START: {
+  //       ;
+  //     } break;
+
+  //     case ESP_HTTPS_OTA_CONNECTED: {
+  //       ;
+  //     } break;
+
+  //     case ESP_HTTPS_OTA_GET_IMG_DESC: {
+  //       ;
+  //     } break;
+
+  //     case ESP_HTTPS_OTA_VERIFY_CHIP_ID: {
+  //       ;
+  //     } break;
+
+  //     case ESP_HTTPS_OTA_DECRYPT_CB: {
+  //       ;
+  //     } break;
+
+  //     case ESP_HTTPS_OTA_WRITE_FLASH: {
+  //       ;
+  //     } break;
+
+  //     case ESP_HTTPS_OTA_UPDATE_BOOT_PARTITION: {
+  //       ;
+  //     } break;
+
+  //     case ESP_HTTPS_OTA_FINISH: {
+  //       ;
+  //     } break;
+
+  //   case ESP_HTTPS_OTA_ABORT: {
+  //       ;
+  //     } break;
+  // }
   else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
     ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
     ESP_LOGI(TAG, "Connected with IP Address: " IPSTR, IP2STR(&event->ip_info.ip));
@@ -908,7 +953,7 @@ system_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, v
     xEventGroupSetBits(g_wifi_event_group, WIFI_CONNECTED_EVENT);
   }
   else if (event_base == ALPHA_EVENT) {
-    ESP_LOGI(TAG, "----------------------------------------------------------->");
+    ESP_LOGI(TAG, "Alpha event -----------------------------------------------------------> id=%ld", event_id);
   }
 }
 
@@ -956,7 +1001,9 @@ vscp_heartbeat_task(void *pvParameter)
   while (true) {
 
     ret = droplet_send(dest_addr, false, false, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
-
+    if (ret != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to send heartbeat. ret = %d", ret);
+    }
     // uint32_t hf = esp_get_free_heap_size();
     // heap_caps_check_integrity_all(true);
     // ESP_LOGI(TAG, "VSCP heartbeat sent - ret=0x%X heap=%X", (unsigned int) ret, (unsigned int) hf);
@@ -1093,13 +1140,22 @@ app_main(void)
     }
 
     // TODO remove !!!!
-    char username[32];
-    size_t length = sizeof(username);
-    rv            = nvs_get_str(g_nvsHandle, "username", username, &length);
-    ESP_LOGI(TAG, "Username_: %s", username);
-    length = sizeof(username);
-    rv     = nvs_get_str(g_nvsHandle, "password", username, &length);
-    ESP_LOGI(TAG, "Password: %s", username);
+    char buf[32];
+    size_t length = sizeof(buf);
+    rv            = nvs_get_str(g_nvsHandle, "username", buf, &length);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to read 'Username' will be set to default. ret=%d", rv);
+      nvs_set_str(g_nvsHandle, "username", DEFAULT_TCPIP_USER);
+    }
+    ESP_LOGI(TAG, "Username: %s", buf);
+    
+    length = sizeof(buf);
+    rv     = nvs_get_str(g_nvsHandle, "password", buf, &length);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to read 'password' will be set to default. ret=%d", rv);
+      nvs_set_str(g_nvsHandle, "password", DEFAULT_TCPIP_PASSWORD);
+    }
+    ESP_LOGI(TAG, "Password: %s", buf);
     length = 16;
     rv     = nvs_get_blob(g_nvsHandle, "guid", g_node_guid, &length);
 
@@ -1210,7 +1266,14 @@ app_main(void)
   // Wait for Wi-Fi connection
   ESP_LOGI(TAG, "Wait for wifi connection...");
   esp_event_post(/*_to(alpha_loop_handle,*/ ALPHA_EVENT, ALPHA_GET_IP_ADDRESS_START, NULL, 0, portMAX_DELAY);
-  xEventGroupWaitBits(g_wifi_event_group, WIFI_CONNECTED_EVENT, false, true, portMAX_DELAY);
+  {
+    EventBits_t ret;
+    uint8_t cnt = 20; // 20 seconds until reboot due to no IP address
+    while (!xEventGroupWaitBits(g_wifi_event_group, WIFI_CONNECTED_EVENT, false, true, 1000 / portTICK_PERIOD_MS)) {      
+      if (--cnt == 0) esp_restart();
+      ESP_LOGI(TAG,"Waiting for IP address. %d", cnt);
+    }
+  }
   esp_event_post(/*_to(alpha_loop_handle,*/ ALPHA_EVENT, ALPHA_GET_IP_ADDRESS_STOP, NULL, 0, portMAX_DELAY);
 
   if (led_indicator_start(g_led_handle, BLINK_CONNECTED) != ESP_OK) {
@@ -1302,7 +1365,7 @@ app_main(void)
   // Start heartbeat task vscp_heartbeat_task
   xTaskCreate(&vscp_heartbeat_task, "vscp_heartbeat_task", 2024, NULL, 5, NULL);
 
-  // startOTA();
+  //startOTA();
 
   // xTaskCreate(vscp_espnow_send_task, "vscp_espnow_send_task", 4096, NULL, 4, NULL);
   // xTaskCreate(vscp_espnow_recv_task, "vscp_espnow_recv_task", 2048, NULL, 4, NULL);
@@ -1333,8 +1396,11 @@ app_main(void)
   }
 
   ret = droplet_send(dest_addr, false, true, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
+  if (ESP_OK != ret) {
+    ESP_LOGE(TAG, "Could not send droplet start event. rv %d", ret);
+  }
 
-  const char *obj = "{"
+  /* const char *obj = "{"
      "\"vscpHead\": 2,"
      "\"vscpObId\": 123,"
      "\"vscpDateTime\": \"2017-01-13T10:16:02\","
@@ -1349,7 +1415,7 @@ app_main(void)
 vscpEventEx ex;
 droplet_parse_vscp_json(obj, &ex);
 char str[512];
-droplet_create_vscp_json(str, &ex);
+droplet_create_vscp_json(str, &ex); */
 
   //test();
 

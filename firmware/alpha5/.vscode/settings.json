@@ -96,6 +96,7 @@
     "bitset": "c",
     "initializer_list": "c",
     "regex": "c",
-    "valarray": "c"
+    "valarray": "c",
+    "esp_https_ota.h": "c"
   }
 }

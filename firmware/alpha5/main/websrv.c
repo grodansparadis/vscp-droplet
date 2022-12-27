@@ -51,6 +51,7 @@
 #include <esp_spiffs.h>
 #include <esp_http_server.h>
 
+#include "main.h"
 #include "websrv.h"
 
 // #define MIN(a, b) (((a) < (b)) ? (a) : (b))
@@ -71,9 +72,13 @@ static char g_chunkbuf[CHUNK_BUFSIZE];
 
 #define IS_FILE_EXT(filename, ext) (strcasecmp(&filename[strlen(filename) - sizeof(ext) + 1], ext) == 0)
 
+
+
 //-----------------------------------------------------------------------------
 //                               Start Basic Auth
 //-----------------------------------------------------------------------------
+
+
 
 ///////////////////////////////////////////////////////////////////////////////
 // http_auth_basic
@@ -116,100 +121,109 @@ http_auth_basic(const char *username, const char *password)
 // An HTTP GET handler
 //
 
-static esp_err_t
-basic_auth_get_handler(httpd_req_t *req)
-{
-  char *buf                          = NULL;
-  size_t buf_len                     = 0;
-  basic_auth_info_t *basic_auth_info = req->user_ctx;
+// static esp_err_t
+// basic_auth_get_handler(httpd_req_t *req)
+// {
+//   char *buf                          = NULL;
+//   size_t buf_len                     = 0;
+//   basic_auth_info_t *basic_auth_info = req->user_ctx;
 
-  buf_len = httpd_req_get_hdr_value_len(req, "Authorization") + 1;
-  if (buf_len > 1) {
-    buf = calloc(1, buf_len);
-    if (!buf) {
-      ESP_LOGE(TAG, "No enough memory for basic authorization");
-      return ESP_ERR_NO_MEM;
-    }
+//   ESP_LOGI(TAG, "basic_auth_get_handler");
 
-    if (httpd_req_get_hdr_value_str(req, "Authorization", buf, buf_len) == ESP_OK) {
-      ESP_LOGI(TAG, "Found header => Authorization: %s", buf);
-    }
-    else {
-      ESP_LOGE(TAG, "No auth value received");
-    }
+//   buf_len = httpd_req_get_hdr_value_len(req, "Authorization") + 1;
+//   if (buf_len > 1) {
+//     buf = calloc(1, buf_len);
+//     if (!buf) {
+//       ESP_LOGE(TAG, "No enough memory for basic authorization");
+//       return ESP_ERR_NO_MEM;
+//     }
 
-    char *auth_credentials = http_auth_basic(basic_auth_info->username, basic_auth_info->password);
-    if (!auth_credentials) {
-      ESP_LOGE(TAG, "No enough memory for basic authorization credentials");
-      free(buf);
-      return ESP_ERR_NO_MEM;
-    }
+//     if (httpd_req_get_hdr_value_str(req, "Authorization", buf, buf_len) == ESP_OK) {
+//       ESP_LOGI(TAG, "Found header => Authorization: %s", buf);
+//     }
+//     else {
+//       ESP_LOGE(TAG, "No auth value received");
+//     }
 
-    if (strncmp(auth_credentials, buf, buf_len)) {
-      ESP_LOGE(TAG, "Not authenticated");
-      httpd_resp_set_status(req, HTTPD_401);
-      httpd_resp_set_type(req, "application/json");
-      httpd_resp_set_hdr(req, "Connection", "keep-alive");
-      httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"Hello\"");
-      httpd_resp_send(req, NULL, 0);
-    }
-    else {
-      ESP_LOGI(TAG, "Authenticated!");
-      char *basic_auth_resp = NULL;
-      httpd_resp_set_status(req, HTTPD_200);
-      httpd_resp_set_type(req, "application/json");
-      httpd_resp_set_hdr(req, "Connection", "keep-alive");
-      asprintf(&basic_auth_resp, "{\"authenticated\": true,\"user\": \"%s\"}", basic_auth_info->username);
-      if (!basic_auth_resp) {
-        ESP_LOGE(TAG, "No enough memory for basic authorization response");
-        free(auth_credentials);
-        free(buf);
-        return ESP_ERR_NO_MEM;
-      }
-      httpd_resp_send(req, basic_auth_resp, strlen(basic_auth_resp));
-      free(basic_auth_resp);
-    }
-    free(auth_credentials);
-    free(buf);
-  }
-  else {
-    ESP_LOGE(TAG, "No auth header received");
-    httpd_resp_set_status(req, HTTPD_401);
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Connection", "keep-alive");
-    httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"Hello\"");
-    httpd_resp_send(req, NULL, 0);
-  }
+//     char *auth_credentials = http_auth_basic(basic_auth_info->username, basic_auth_info->password);
+//     if (!auth_credentials) {
+//       ESP_LOGE(TAG, "No enough memory for basic authorization credentials");
+//       free(buf);
+//       return ESP_ERR_NO_MEM;
+//     }
 
-  return ESP_OK;
-}
+//     if (strncmp(auth_credentials, buf, buf_len)) {
+//       ESP_LOGE(TAG, "Not authenticated");
+//       httpd_resp_set_status(req, HTTPD_401);
+//       httpd_resp_set_type(req, "application/json");
+//       httpd_resp_set_hdr(req, "Connection", "keep-alive");
+//       httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"Hello\"");
+//       httpd_resp_send(req, NULL, 0);
+//     }
+//     else {
+//       ESP_LOGI(TAG, "Authenticated!");
+//       char *basic_auth_resp = NULL;
+//       httpd_resp_set_status(req, HTTPD_200);
+//       httpd_resp_set_type(req, "application/json");
+//       httpd_resp_set_hdr(req, "Connection", "keep-alive");
+//       asprintf(&basic_auth_resp, "{\"authenticated\": true,\"user\": \"%s\"}", basic_auth_info->username);
+//       if (!basic_auth_resp) {
+//         ESP_LOGE(TAG, "No enough memory for basic authorization response");
+//         free(auth_credentials);
+//         free(buf);
+//         return ESP_ERR_NO_MEM;
+//       }
+//       httpd_resp_send(req, basic_auth_resp, strlen(basic_auth_resp));
+//       free(basic_auth_resp);
+//     }
+//     free(auth_credentials);
+//     free(buf);
+//   }
+//   else {
+//     ESP_LOGE(TAG, "No auth header received");
+//     httpd_resp_set_status(req, HTTPD_401);
+//     httpd_resp_set_type(req, "application/json");
+//     httpd_resp_set_hdr(req, "Connection", "keep-alive");
+//     httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"Hello\"");
+//     httpd_resp_send(req, NULL, 0);
+//   }
 
-static httpd_uri_t basic_auth = {
-  .uri     = "/basic_auth",
-  .method  = HTTP_GET,
-  .handler = basic_auth_get_handler,
-};
+//   return ESP_OK;
+// }
 
-///////////////////////////////////////////////////////////////////////////////
-// httpd_register_basic_auth
-//
+// static httpd_uri_t basic_auth = {
+//   .uri     = "/basic_auth",
+//   .method  = HTTP_GET,
+//   .handler = basic_auth_get_handler,
+// };
 
-static void
-httpd_register_basic_auth(httpd_handle_t server)
-{
-  basic_auth_info_t *basic_auth_info = calloc(1, sizeof(basic_auth_info_t));
-  if (basic_auth_info) {
-    basic_auth_info->username = CONFIG_EXAMPLE_BASIC_AUTH_USERNAME;
-    basic_auth_info->password = CONFIG_EXAMPLE_BASIC_AUTH_PASSWORD;
+// ///////////////////////////////////////////////////////////////////////////////
+// // httpd_register_basic_auth
+// //
 
-    basic_auth.user_ctx = basic_auth_info;
-    httpd_register_uri_handler(server, &basic_auth);
-  }
-}
+// static void
+// httpd_register_basic_auth(httpd_handle_t server)
+// {
+//   esp_err_t ret;
+//   basic_auth_info_t *basic_auth_info = calloc(1, sizeof(basic_auth_info_t));
+//   if (basic_auth_info) {
+//     basic_auth_info->username = DEFAULT_TCPIP_USER;
+//     basic_auth_info->password = DEFAULT_TCPIP_PASSWORD;
+
+//     basic_auth.user_ctx = basic_auth_info;
+//     if (ESP_OK != (ret = httpd_register_uri_handler(server, &basic_auth)) ) {
+//       ESP_LOGE(TAG,"Failed to register aut hri handler %d", ret);
+//     }
+//   }
+// }
+
+
 
 //-----------------------------------------------------------------------------
 //                               End Basic Auth
 //-----------------------------------------------------------------------------
+
+
 
 ///////////////////////////////////////////////////////////////////////////////
 // info_get_handler
@@ -256,37 +270,37 @@ static esp_err_t
   switch (chip_info.model) {
 
     case CHIP_ESP32:
-      printf("ESP32\n");
+      //printf("ESP32\n");
       sprintf(buf, "<td class=\"prop\">ESP32</td><tr>");
       break;
 
     case CHIP_ESP32S2:
-      printf("ESP32-S2\n");
+      //printf("ESP32-S2\n");
       sprintf(buf, "<td class=\"prop\">ESP32-S2</td><tr>");
       break;
 
     case CHIP_ESP32S3:
-      printf("ESP32-S3\n");
+      //printf("ESP32-S3\n");
       sprintf(buf, "<td class=\"prop\">ESP32-S3</td><tr>");
       break;
 
     case CHIP_ESP32C3:
-      printf("ESP32-C3\n");
+      //printf("ESP32-C3\n");
       sprintf(buf, "<td class=\"prop\">ESP32-C3</td><tr>");
       break;
 
     case CHIP_ESP32H2:
-      printf("ESP32-H2\n");
+      //printf("ESP32-H2\n");
       sprintf(buf, "<td class=\"prop\">ESP32-H2</td><tr>");
       break;
 
     case CHIP_ESP32C2:
-      printf("ESP32-C2\n");
+      //printf("ESP32-C2\n");
       sprintf(buf, "<td class=\"prop\">ESP32-C2</td><tr>");
       break;
 
     default:
-      printf("Unknown\n");
+      //printf("Unknown\n");
       sprintf(buf, "<td class=\"prop\">Unknown</td></tr>");
       break;
   }
@@ -474,19 +488,19 @@ static esp_err_t
 
   wifi_ap_record_t ap_info;
   rv = esp_wifi_sta_get_ap_info(&ap_info);
-  printf("bssid: " MACSTR "\n", MAC2STR(ap_info.bssid));
+  //printf("bssid: " MACSTR "\n", MAC2STR(ap_info.bssid));
   sprintf(buf, "<tr><td class=\"name\">bssid:</td><td class=\"prop\">" MACSTR "</td></tr>", MAC2STR(ap_info.bssid));
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  printf("ssid: %s\n", ap_info.ssid);
+  //printf("ssid: %s\n", ap_info.ssid);
   sprintf(buf, "<tr><td class=\"name\">ssid:</td><td class=\"prop\">%s</td></tr>", ap_info.ssid);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  printf("channel: %d (%d)\n", ap_info.primary, ap_info.second);
+  //printf("channel: %d (%d)\n", ap_info.primary, ap_info.second);
   sprintf(buf, "<tr><td class=\"name\">channel:</td><td class=\"prop\">%d (%d)</td></tr>", ap_info.primary, ap_info.second);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  printf("signal strength: %d\n", ap_info.rssi);
+  //printf("signal strength: %d\n", ap_info.rssi);
   if ( ap_info.rssi > -30 ) {
     sprintf(temp,"Perfect");
   }
@@ -512,12 +526,12 @@ static esp_err_t
   sprintf(buf, "<tr><td class=\"name\">signal strength:</td><td class=\"prop\">%d dBm ( %d%% = %s)</td></tr>", ap_info.rssi, (2 * (ap_info.rssi + 100) ), temp);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  printf("Mode: 11%s%s%s %s %s",
-            ap_info.phy_11b ? "b" : "",
-            ap_info.phy_11g ? "g" : "",
-            ap_info.phy_11n ? "n" : "",
-            ap_info.phy_lr ? "lr" : "",
-            ap_info.wps ? "wps" : "");
+  // printf("Mode: 11%s%s%s %s %s",
+  //           ap_info.phy_11b ? "b" : "",
+  //           ap_info.phy_11g ? "g" : "",
+  //           ap_info.phy_11n ? "n" : "",
+  //           ap_info.phy_lr ? "lr" : "",
+  //           ap_info.wps ? "wps" : "");
   //printf("\nAuth mode of AP: ");
   switch (ap_info.authmode) {
     
@@ -582,15 +596,15 @@ static esp_err_t
 
   esp_netif_ip_info_t ifinfo;
   esp_netif_get_ip_info(g_netif, &ifinfo);
-  printf("IP address (wifi): " IPSTR "\n", IP2STR(&ifinfo.ip));
+  //printf("IP address (wifi): " IPSTR "\n", IP2STR(&ifinfo.ip));
   sprintf(buf, "<tr><td class=\"name\">IP address (wifi):</td><td class=\"prop\">" IPSTR "</td></tr>", IP2STR(&ifinfo.ip));
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  printf("Subnet Mask: " IPSTR "\n", IP2STR(&ifinfo.netmask));
+  //printf("Subnet Mask: " IPSTR "\n", IP2STR(&ifinfo.netmask));
   sprintf(buf, "<tr><td class=\"name\">Subnet Mask:</td><td class=\"prop\">" IPSTR "</td></tr>", IP2STR(&ifinfo.netmask));
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
   
-  printf("Gateway: " IPSTR "\n", IP2STR(&ifinfo.gw));
+  //printf("Gateway: " IPSTR "\n", IP2STR(&ifinfo.gw));
   sprintf(buf, "<tr><td class=\"name\">Gateway:</td><td class=\"prop\">" IPSTR "</td></tr>", IP2STR(&ifinfo.gw));
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
@@ -642,21 +656,42 @@ static esp_err_t
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// update_get_handler
+// upgrdsrv_get_handler
 //
 // HTTP GET handler for update of firmware
 //
 
 static esp_err_t
-  update_get_handler(httpd_req_t *req)
+  upgrdsrv_get_handler(httpd_req_t *req)
 {
-  const char *resp_str = "<html><head><meta charset='utf-8'><meta name=\"viewport\" content=\"width=device-width,initial-scale=1,user-scalable=no\" /><link rel=\"icon\" href=\"favicon-32x32.png\"><title>Droplet Alpha node - Update</title><link rel=\"stylesheet\" href=\"style.css\" /><meta http-equiv=\"refresh\" content=\"5;url=index.html\" /></head><body><div style='text-align:left;display:inline-block;color:#eaeaea;min-width:340px;'><div style='text-align:center;color:#eaeaea;'><h1>The system is restarting...</h1></div></div></body></html>";
+  const char *resp_str = "<html><head><meta charset='utf-8'><meta name=\"viewport\" content=\"width=device-width,initial-scale=1,user-scalable=no\" /><link rel=\"icon\" href=\"favicon-32x32.png\"><title>Droplet Alpha node - Update</title><link rel=\"stylesheet\" href=\"style.css\" /><meta http-equiv=\"refresh\" content=\"5;url=index.html\" /></head><body><div style='text-align:left;display:inline-block;color:#eaeaea;min-width:340px;'><div style='text-align:center;color:#eaeaea;'><h1>Upgrade from secure server...</h1></div></div></body></html>";
+  httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
+
+  startOTA();
+
+  // Let content render
+  vTaskDelay(2000 / portTICK_PERIOD_MS);
+
+  //esp_restart();
+  return ESP_OK;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// upgrdlocal_get_handler
+//
+// HTTP GET handler for update of firmware
+//
+
+static esp_err_t
+  upgrdlocal_get_handler(httpd_req_t *req)
+{
+  const char *resp_str = "<html><head><meta charset='utf-8'><meta name=\"viewport\" content=\"width=device-width,initial-scale=1,user-scalable=no\" /><link rel=\"icon\" href=\"favicon-32x32.png\"><title>Droplet Alpha node - Update</title><link rel=\"stylesheet\" href=\"style.css\" /><meta http-equiv=\"refresh\" content=\"5;url=index.html\" /></head><body><div style='text-align:left;display:inline-block;color:#eaeaea;min-width:340px;'><div style='text-align:center;color:#eaeaea;'><h1>Upgrade local...</h1></div></div></body></html>";
   httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
 
   // Let content render
   vTaskDelay(2000 / portTICK_PERIOD_MS);
 
-  esp_restart();
+  //esp_restart();
   return ESP_OK;
 }
 
@@ -945,8 +980,80 @@ spiffs_get_handler(httpd_req_t *req)
   char filepath[FILE_PATH_MAX];
   FILE *fd = NULL;
   struct stat file_stat;
+  char *buf                          = NULL;
+  size_t buf_len                     = 0;
 
   ESP_LOGI(TAG, "uri : [%s]", req->uri);
+
+
+  //---------------------------------------------------------------------------
+
+
+  ESP_LOGI(TAG, "spiffs_get_handler");
+
+  buf_len = httpd_req_get_hdr_value_len(req, "Authorization") + 1;
+  if (buf_len > 1) {
+    buf = calloc(1, buf_len);
+    if (!buf) {
+      ESP_LOGE(TAG, "No enough memory for basic authorization");
+      return ESP_ERR_NO_MEM;
+    }
+
+    if (httpd_req_get_hdr_value_str(req, "Authorization", buf, buf_len) == ESP_OK) {
+      ESP_LOGI(TAG, "Found header => Authorization: %s", buf);
+    }
+    else {
+      ESP_LOGE(TAG, "No auth value received");
+    }
+
+    char *auth_credentials = http_auth_basic(DEFAULT_TCPIP_USER, DEFAULT_TCPIP_PASSWORD);
+    if (!auth_credentials) {
+      ESP_LOGE(TAG, "No enough memory for basic authorization credentials");
+      free(buf);
+      return ESP_ERR_NO_MEM;
+    }
+
+    if (strncmp(auth_credentials, buf, buf_len)) {
+      ESP_LOGE(TAG, "Not authenticated");
+      httpd_resp_set_status(req, HTTPD_401);
+      httpd_resp_set_type(req, "application/json");
+      httpd_resp_set_hdr(req, "Connection", "keep-alive");
+      httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"Alpha\"");
+      httpd_resp_send(req, NULL, 0);
+    }
+    else {
+      ESP_LOGI(TAG, "------> Authenticated!");
+      /* char *basic_auth_resp = NULL;
+      httpd_resp_set_status(req, HTTPD_200);
+      httpd_resp_set_type(req, "application/json");
+      httpd_resp_set_hdr(req, "Connection", "keep-alive");
+      asprintf(&basic_auth_resp, "{\"authenticated\": true,\"user\": \"%s\"}", basic_auth_info->username);
+      if (!basic_auth_resp) {
+        ESP_LOGE(TAG, "No enough memory for basic authorization response");
+        free(auth_credentials);
+        free(buf);
+        return ESP_ERR_NO_MEM;
+      }
+      httpd_resp_send(req, basic_auth_resp, strlen(basic_auth_resp)); 
+      free(basic_auth_resp); */
+    }
+    free(auth_credentials);
+    free(buf);
+  }
+  else {
+    ESP_LOGE(TAG, "No auth header received.");
+    httpd_resp_set_status(req, HTTPD_401);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Connection", "keep-alive");
+    httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"Alpha\"");
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+  }
+
+
+  // -----------------------------------------------------------------------------
+
+
 
   if (0 == strncmp(req->uri, "/hello", 6)) {
     printf("--------- HELLO ---------\n");
@@ -958,9 +1065,19 @@ spiffs_get_handler(httpd_req_t *req)
     return info_get_handler(req);
   }
 
-  if (0 == strncmp(req->uri, "/reset", 5)) {
+  if (0 == strncmp(req->uri, "/reset", 6)) {
     printf("--------- reset ---------\n");
     return reset_get_handler(req);
+  }
+
+  if (0 == strncmp(req->uri, "/upgrdsrv", 9)) {
+    printf("--------- Upgrade server ---------\n");
+    return upgrdsrv_get_handler(req);
+  }
+
+  if (0 == strncmp(req->uri, "/upgrdlocal", 10)) {
+    printf("--------- Upgrade local ---------\n");
+    return upgrdlocal_get_handler(req);
   }
 
   const char *filename = get_path_from_uri(filepath, "/spiffs", req->uri, sizeof(filepath));
@@ -1070,9 +1187,10 @@ start_webserver(void)
     // httpd_register_uri_handler(server, &hello);
     // httpd_register_uri_handler(server, &echo);
     // httpd_register_uri_handler(server, &ctrl);
+    //httpd_register_basic_auth(server);
     httpd_register_uri_handler(server, &file_spiffs);
 
-    httpd_register_basic_auth(server);
+    
 
     return server;
   }

@@ -17,20 +17,28 @@
     <div style='padding:0;' id='l1' name='l1'></div>
     <div id=but3d style="display: block;"></div>
     <p>
-    <form id=but3 class="button" action='config' method='get'><button>Configuration</button></form>
+      <div>
+        <h3>Upgrade from web server</h3>
+        <form id=but3 class="button" action='/upgrdsrv' method='get'>
+          <fieldset>
+            OTA URL:
+            <input type="text" name="url" value="https://eurosource.se/droplet/alpha.bin">
+            <button>Start Upgrade</button>
+          </fieldset>
+        </form>
+      </div>
     </p>
     <p>
-    <form id=but4 style="display: block;" action='info' method='get'><button>Information</button></form>
-    </p>
-    <p>
-    <form id=but5 style="display: block;" action='upgrade' method='get'><button>Firmware Upgrade</button></form>
-    </p>
-    <p>
-    <form id=but14 style="display: block;" action='console' method='get'><button>Console</button></form>
-    </p>
-    <p>
-    <form id=but0 style="display: block;" action='reset' method='get' onsubmit='return confirm("Confirm Restart");'><button
-        name='rst' class='button bred'>Restart</button></form>
+      <div>
+        <h3>Upgrade from local upload</h3>
+        <form id=but3 class="button" name="url"  action='/upgrdlocal' method='get'>
+          <fieldset>
+            Local file:
+            <input style="width:72%;"type="text"> <button style="vertical-align:middle; background:#c0c0c0;width: 10%;line-height: 1.7rem;">...</button>
+            <button>Start Upgrade</button>
+          </fieldset>
+        </form>
+      </div>
     </p>
     <div style='text-align:right;font-size:11px;'>
       <hr /><a href='https://vscp.org' target='_blank' style='color:#aaa;'>Alpha Droplet 13.1 -- vscp.org</a>

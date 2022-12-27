@@ -3,11 +3,11 @@ div,
     input,
     select {
       padding: 5px;
-      font-size: 1.2em;
+      font-size: 1.0em;
     }
 
     fieldset {
-      background: #4f4f4f;
+      background: #020458;
     }
 
     p {

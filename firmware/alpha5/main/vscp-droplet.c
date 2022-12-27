@@ -65,6 +65,7 @@
 
 #include <vscp.h>
 #include <vscp-firmware-helper.h>
+
 #include "vscp-droplet.h"
 
 #define DROPLET_VERSION              1
