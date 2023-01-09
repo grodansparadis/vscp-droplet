@@ -6,7 +6,7 @@
   This file is part of the VSCP (https://www.vscp.org)
 
   The MIT License (MIT)
-  Copyright © 2022 Ake Hedman, the VSCP project <info@vscp.org>
+  Copyright © 2022-2023 Ake Hedman, the VSCP project <info@vscp.org>
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -224,6 +224,58 @@ http_auth_basic(const char *username, const char *password)
 //-----------------------------------------------------------------------------
 
 
+
+
+///////////////////////////////////////////////////////////////////////////////
+// escape_buf
+//
+// Replace escape expressions in buffer
+//
+// MODULE
+// ------
+// %ver%          - Module Version
+// %date%         - Current date
+// %time%         - Current time
+// %ntp1%         - Time server 1 (disabled if bland)
+// %ntp2%         - Time server 2
+//
+// WIFI
+// ----
+// %sid1%
+// %pw1%
+// %sid1%
+// %pw1%
+//
+// MQTT
+// ----
+// %mqtt-host%
+// %mqtt-port%
+// %mqtt-client%
+// %mqtt-user%
+// %mqtt-pw%
+// %mqtt-sub%
+// %mqtt.pub%
+//
+// DROPLET
+// -------
+// %masterkey%    . Droplet master key (32 + zero termination)
+// %ttl%          - Time to live (0-255)
+// %bforward%     - Packet forward enable("true")/disable("false")
+// %lr%           - Long range ("true"/"false").
+// %rssi-thld%    - RSSI threshold
+//
+// MQTT
+// ----
+
+
+static esp_err_t
+esapeBuf(const char buf, size_t len)
+{
+  char *p = buf;
+
+  while 
+  return ESP_OK;
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // info_get_handler
@@ -622,10 +674,10 @@ static esp_err_t
   sprintf(buf, "</table>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  sprintf(buf, "<p><form id=but14 style=\"display: block;\" action='index.html' method='get'><button>Main Menu</button></form></p><p>");
+  sprintf(buf, "<div style='text-align:right;font-size:11px;'><hr /><form id=but14 style=\"display: block;\" action='index.html' method='get'><button class=\"byell\">Main Menu</button></form>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
   
-  sprintf(buf, "<div style='text-align:right;font-size:11px;'><hr /><a href='https://vscp.org' target='_blank' style='color:#aaa;'>Alpha Droplet 13.1 -- vscp.org</a></div>");
+  sprintf(buf, "<div style='text-align:right;font-size:11px;'><hr /><a href='https://vscp.org' target='_blank' style='color:#aaa;'>Alpha Droplet -- vscp.org</a></div>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
   sprintf(buf, "</div></body></html>");
@@ -808,6 +860,7 @@ hello_get_handler(httpd_req_t *req)
   if (httpd_req_get_hdr_value_len(req, "Host") == 0) {
     ESP_LOGI(TAG, "Request headers lost");
   }
+
   return ESP_OK;
 }
 
@@ -817,6 +870,76 @@ static const httpd_uri_t hello = { .uri     = "/hello",
                                    // Let's pass response string in user
                                    // context to demonstrate it's usage
                                    .user_ctx = "Hello World!" };
+
+///////////////////////////////////////////////////////////////////////////////
+// upd_droplet_get_handler
+//
+// Update droplet configuration settings
+//
+
+static esp_err_t
+upd_droplet_get_handler(httpd_req_t *req)
+{
+  char *buf;
+  size_t buf_len;
+
+  // Get header value string length and allocate memory for length + 1,
+  // extra byte for null termination
+  buf_len = httpd_req_get_hdr_value_len(req, "Host") + 1;
+  if (buf_len > 1) {
+    buf = malloc(buf_len);
+    // Copy null terminated value string into buffer
+    if (httpd_req_get_hdr_value_str(req, "Host", buf, buf_len) == ESP_OK) {
+      ESP_LOGI(TAG, "Found header => Host: %s", buf);
+    }
+    free(buf);
+  }
+
+  // Read URL query string length and allocate memory for length + 1,
+  // extra byte for null termination
+
+  buf_len = httpd_req_get_url_query_len(req) + 1;
+  if (buf_len > 1) {
+    buf = malloc(buf_len);
+    if (httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK) {
+      ESP_LOGI(TAG, "Found URL query => %s", buf);
+      char param[33];
+      // Get value of expected key from query string
+      if (httpd_query_key_value(buf, "key", param, sizeof(param)) == ESP_OK) {
+        ESP_LOGI(TAG, "Found URL query parameter => key=%s", param);
+      }
+      if (httpd_query_key_value(buf, "ttl", param, sizeof(param)) == ESP_OK) {
+        ESP_LOGI(TAG, "Found URL query parameter => ttl=%s", param);
+      }
+      // Enable packet forward functionality
+      if (httpd_query_key_value(buf, "bforward", param, sizeof(param)) == ESP_OK) {
+        ESP_LOGI(TAG, "Found URL query parameter => bforward=%s", param);
+      }
+      else {
+        // Key 'bforward' is not found
+      }
+      // Enable Long Range
+      if (httpd_query_key_value(buf, "blr", param, sizeof(param)) == ESP_OK) {
+        ESP_LOGI(TAG, "Found URL query parameter => blr=%s", param);
+      }
+      else {
+        // Key 'blr' is not found
+      }
+    }
+    free(buf);
+  }
+
+  //httpd_resp_set_hdr(req, "Custom-Header-1", "Custom-Value-1");
+
+  // Send response with custom headers and body set as the
+  // string passed in user context
+  const char *resp_str = "<html><head><meta http-equiv=\"refresh\" content=\"0; url='index.html'\" /></head><body>Save<body></html>";
+  httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
+
+
+
+  return ESP_OK;
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // echo_post_handler
@@ -1060,6 +1183,12 @@ spiffs_get_handler(httpd_req_t *req)
     return hello_get_handler(req);
   }
 
+  
+  if (0 == strncmp(req->uri, "/echo", 5)) {
+    printf("--------- ECHO ---------\n");
+    return echo_post_handler(req);
+  }
+
   if (0 == strncmp(req->uri, "/info", 5)) {
     printf("--------- info ---------\n");
     return info_get_handler(req);
@@ -1080,17 +1209,23 @@ spiffs_get_handler(httpd_req_t *req)
     return upgrdlocal_get_handler(req);
   }
 
+  if (0 == strncmp(req->uri, "/upd-droplet", 12)) {
+    printf("--------- Upgrade droplet settings ---------\n");
+    return upd_droplet_get_handler(req);
+  }
+
+  // If name has trailing '/', respond with directory contents
+  if (0 == strcmp(req->uri, "/")) {
+    ESP_LOGI(TAG, "Set default uri");
+    strcpy(req->uri, "/index.html");
+  }
+
   const char *filename = get_path_from_uri(filepath, "/spiffs", req->uri, sizeof(filepath));
   if (!filename) {
     ESP_LOGE(TAG, "Filename is too long");
     // Respond with 500 Internal Server Error
     httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Filename too long");
     return ESP_FAIL;
-  }
-
-  // If name has trailing '/', respond with directory contents
-  if (0 == strcmp(filename, "/spiffs/'")) {
-    strcpy(req->uri, "/index.html");
   }
 
   if (stat(filepath, &file_stat) == -1) {

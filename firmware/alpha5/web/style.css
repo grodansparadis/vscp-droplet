@@ -7,7 +7,7 @@ div,
     }
 
     fieldset {
-      background: #020458;
+      background: #4b4b4e;
     }
 
     p {
@@ -61,7 +61,7 @@ div,
     button {
       border: 1;
       border-radius: 0.5rem;
-      background: #f7f1a6;
+      background: #d3d3d0;
       color: #000000;
       line-height: 2.4rem;
       font-size: 1.2rem;
@@ -88,7 +88,15 @@ div,
     }
 
     .bgrn:hover {
-      background: #5aaf6f;
+      background: #296939;
+    }
+
+    .byell {
+      background: #f0ee81;
+    }
+
+    .byell:hover {
+      background: #68642e;
     }
 
     a {

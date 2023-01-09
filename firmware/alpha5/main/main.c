@@ -6,7 +6,7 @@
   This file is part of the VSCP (https://www.vscp.org)
 
   The MIT License (MIT)
-  Copyright © 2022 Ake Hedman, the VSCP project <info@vscp.org>
+  Copyright © 2022-2023 Ake Hedman, the VSCP project <info@vscp.org>
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -118,7 +118,7 @@ nvs_handle_t g_nvsHandle = 0;
 static QueueHandle_t s_espnow_queue;
 
 // If init button is held for  > 10 seconds defaults are stored and the
-// node is restarted. Wifi creadentials need to be restored
+// node is restarted. Wifi credentials need to be restored
 uint32_t g_restore_defaults_timer = 0;
 
 // Initiating provisioning is done with a button click
@@ -129,7 +129,7 @@ uint32_t g_provisioning_state_timer = 0;
 static button_handle_t g_btns[BUTTON_CNT] = { 0 };
 
 // Transports
-transport_t g_tr_tcpsrv[MAX_TCP_CONNECTIONS] = {};
+transport_t g_tr_tcpsrv[MAX_TCP_CONNECTIONS] = {}; // VSCP tcp/ip link server
 transport_t g_tr_mqtt                        = {}; // MQTT
 
 static void
