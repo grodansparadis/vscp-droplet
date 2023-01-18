@@ -80,6 +80,8 @@
 #include "button.h"
 #include "led_indicator.h"
 
+#include "net_logging.h"
+
 // #ifdef CONFIG_PROV_TRANSPORT_BLE
 // #include <wifi_provisioning/scheme_ble.h>
 // #endif /* CONFIG_PROV_TRANSPORT_BLE */
@@ -89,16 +91,13 @@
 // #endif /* CONFIG_PROV_TRANSPORT_SOFTAP */
 
 const char *pop_data   = "VSCP ALPHA";
-static const char *TAG = "alpha";
+static const char *TAG = "ALPHA DROPLET";
 
 #define HASH_LEN   32
 #define BUTTON_CNT 1
 
 extern const uint8_t server_cert_pem_start[] asm("_binary_ca_cert_pem_start");
 extern const uint8_t server_cert_pem_end[] asm("_binary_ca_cert_pem_end");
-
-// Counter for reboots
-uint32_t g_boot_counter;
 
 // The net interface
 esp_netif_t *g_netif = NULL;
@@ -131,6 +130,9 @@ static button_handle_t g_btns[BUTTON_CNT] = { 0 };
 // Transports
 transport_t g_tr_tcpsrv[MAX_TCP_CONNECTIONS] = {}; // VSCP tcp/ip link server
 transport_t g_tr_mqtt                        = {}; // MQTT
+
+// Logging
+int16_t g_write2Stdout = 0;     // Enable write to standard out
 
 static void
 vscp_heartbeat_task(void *pvParameter);
@@ -192,14 +194,40 @@ const blink_step_t test_blink[] = {
   { LED_BLINK_STOP, 0, 0 },               // step5: stop blink (off)
 };
 
+///////////////////////////////////////////////////////////
+//                   P E R S I S T A N T
+///////////////////////////////////////////////////////////
+
+// Set default configuration
+
+node_persistent_config_t g_persistent = {
+
+  // General
+  .nodeName   = "Alpha Node", 
+  .pmk = { 0 },
+  .nodeGuid = { 0 },      // GUID for unit
+  .startDelay = 2,
+  .bootCnt    = 0,
+
+  // Logging
+  .logLevel = ESP_LOG_ERROR,
+  .logOutput = ALPHA_LOG_STD,
+  .logRetries = 5,
+  .logDestination = { 0 },
+  .logPort = 6789,
+  .logMqttTopic = "%guid/log",
+
+  // Web server
+  .webPort = 80,
+  .webUsername = "vscp",
+  .webPassword = "secret"
+};
+
 //----------------------------------------------------------
 
 ///////////////////////////////////////////////////////////
 //                      V S C P
 ///////////////////////////////////////////////////////////
-
-// GUID for unit
-uint8_t g_node_guid[16]; // Ful GUID for node
 
 // ESP-NOW
 SemaphoreHandle_t g_ctrl_task_sem;
@@ -229,6 +257,193 @@ static EventGroupHandle_t g_wifi_event_group;
 
 #define SEND_CB_OK   BIT0
 #define SEND_CB_FAIL BIT1
+
+///////////////////////////////////////////////////////////////////////////////
+// readPersistentConfigs
+//
+
+esp_err_t
+readPersistentConfigs(void)
+{
+  esp_err_t rv;
+  char buf[80];
+  size_t length = sizeof(buf);
+
+  // boot counter
+  rv = nvs_get_u32(g_nvsHandle, "boot_counter", &g_persistent.bootCnt);
+  switch (rv) {
+
+    case ESP_OK:
+      ESP_LOGI(TAG, "Boot counter = %d", (int) g_persistent.bootCnt);
+      break;
+
+    case ESP_ERR_NVS_NOT_FOUND:
+      ESP_LOGE(TAG, "The boot counter is not initialized yet!");
+      break;
+
+    default:
+      ESP_LOGE(TAG, "Error (%s) reading boot counter!", esp_err_to_name(rv));
+      break;      
+  
+  }
+
+  // Update and write back boot counter
+  g_persistent.bootCnt++;
+  rv = nvs_set_u32(g_nvsHandle, "boot_counter", g_persistent.bootCnt);
+  if (rv != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to update boot counter");
+  }
+
+  // Node name
+  rv = nvs_get_str(g_nvsHandle, "node_name", buf, &length);
+  switch (rv) {
+    case ESP_OK:
+      strncpy(g_persistent.nodeName, buf, sizeof(g_persistent.nodeName));
+      ESP_LOGI(TAG, "Node Name = %s", g_persistent.nodeName);
+      break;
+
+    case ESP_ERR_NVS_NOT_FOUND:
+      rv = nvs_set_str(g_nvsHandle, "node_name", "Alpha Node");
+      if (rv != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update node name");
+      }
+      break;
+
+    default:
+      ESP_LOGE(TAG, "Error (%s) reading 'node_name'!", esp_err_to_name(rv));
+      break;
+  }
+
+  // Start Delay (seconds)
+  rv = nvs_get_u8(g_nvsHandle, "start_delay", &g_persistent.startDelay);
+  switch (rv) {
+
+    case ESP_OK:
+      ESP_LOGI(TAG, "Start delay = %d", g_persistent.startDelay);
+      break;
+
+    case ESP_ERR_NVS_NOT_FOUND:
+      rv = nvs_set_u8(g_nvsHandle, "start_delay", 2);
+      if (rv != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update start delay");
+      }
+      break;
+
+    default:
+      ESP_LOGE(TAG, "Error (%s) reading!", esp_err_to_name(rv));
+      break;
+  }
+
+  // Logging
+  esp_log_level_set("*", ESP_LOG_INFO); 
+  rv = nvs_get_u8(g_nvsHandle, "log-level", &g_persistent.logLevel);
+  switch (rv) {
+
+    case ESP_OK:
+      ESP_LOGI(TAG, "Log level = %d", g_persistent.logLevel);
+      //esp_log_level_set("*", g_persistent.logLevel);   // TODO!!!! ENABLE in production
+      break;
+
+    case ESP_ERR_NVS_NOT_FOUND:
+      rv = nvs_set_u8(g_nvsHandle, "log-level", ESP_LOG_ERROR);
+      if (rv != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update log-level");
+      }
+      break;
+
+    default:
+      ESP_LOGE(TAG, "Error (%s) reading!", esp_err_to_name(rv));
+      break;
+  }
+
+  // VSCP Link Username
+  rv            = nvs_get_str(g_nvsHandle, "vscp_username", buf, &length);
+  if (rv != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to read 'VSCP Username' will be set to default. ret=%d", rv);
+    rv = nvs_set_str(g_nvsHandle, "vscp_username", DEFAULT_TCPIP_USER);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to save VSCP username");
+    }
+  }
+  //ESP_LOGI(TAG, "VSCP Username: %s", buf);
+
+  // VSCP Link password
+  length = sizeof(buf);
+  rv     = nvs_get_str(g_nvsHandle, "vscp_password", buf, &length);
+  if (rv != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to read 'VSCP password' will be set to default. ret=%d", rv);
+    nvs_set_str(g_nvsHandle, "vscp_password", DEFAULT_TCPIP_PASSWORD);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to save VSCP password");
+    }
+  }
+  //ESP_LOGI(TAG, "VSCP Password: %s", buf);
+
+  // pmk (Primary key)
+  length = 32;
+  rv     = nvs_get_blob(g_nvsHandle, "pmk", g_persistent.pmk, &length);
+  if (rv != ESP_OK) {    
+    const char key[] = VSCP_DEFAULT_KEY32;
+    const char *pos = key;
+    for (int i=0; i < 32; i++) {
+        sscanf(pos, "%2hhx", &g_persistent.pmk[i]);
+        pos += 2;
+    }
+    rv = nvs_set_blob(g_nvsHandle, "pmk", g_persistent.pmk, 32);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG,"Failed to write node pmk to nvs. rv=%d", rv);
+    }
+  }
+
+  // GUID
+  length = 16;
+  rv     = nvs_get_blob(g_nvsHandle, "guid", g_persistent.nodeGuid, &length);
+
+  if (rv != ESP_OK) {
+    g_persistent.nodeGuid[0] = 0xff;
+    g_persistent.nodeGuid[1] = 0xff;
+    g_persistent.nodeGuid[2] = 0xff;
+    g_persistent.nodeGuid[3] = 0xff;
+    g_persistent.nodeGuid[4] = 0xff;
+    g_persistent.nodeGuid[5] = 0xff;
+    g_persistent.nodeGuid[6] = 0xff;
+    g_persistent.nodeGuid[7] = 0xfe;
+    rv = esp_efuse_mac_get_default(g_persistent.nodeGuid + 8);    
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG,"esp_efuse_mac_get_default failed to get GUID. rv=%d", rv);
+    }
+
+    rv = nvs_set_blob(g_nvsHandle, "guid", g_persistent.nodeGuid, 16);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG,"Failed to write node GUID to nvs. rv=%d", rv);
+    }
+  }
+  ESP_LOGI(TAG,
+             "GUID for node: %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
+             g_persistent.nodeGuid[0],
+             g_persistent.nodeGuid[1],
+             g_persistent.nodeGuid[2],
+             g_persistent.nodeGuid[3],
+             g_persistent.nodeGuid[4],
+             g_persistent.nodeGuid[5],
+             g_persistent.nodeGuid[6],
+             g_persistent.nodeGuid[7],
+             g_persistent.nodeGuid[8],
+             g_persistent.nodeGuid[9],
+             g_persistent.nodeGuid[10],
+             g_persistent.nodeGuid[11],
+             g_persistent.nodeGuid[12],
+             g_persistent.nodeGuid[13],
+             g_persistent.nodeGuid[14],
+             g_persistent.nodeGuid[15]);
+  
+  rv = nvs_commit(g_nvsHandle);
+  if (rv != ESP_OK) {
+    ESP_LOGI(TAG, "Failed to commit updates to nvs\n");
+  }
+
+  return ESP_OK;
+}
 
 //-----------------------------------------------------------------------------
 //                                    OTA
@@ -269,6 +484,7 @@ _http_event_handler(esp_http_client_event_t *evt)
       ESP_LOGD(TAG, "HTTP_EVENT_REDIRECT");
       break;
   }
+
   return ESP_OK;
 }
 
@@ -870,14 +1086,14 @@ system_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, v
 
       case WIFI_EVENT_AP_STACONNECTED: {
         wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *) event_data;
-        //ESP_LOGI(TAG, "station " MACSTR " join, AID=%d", MAC2STR(event->mac), (int)event->aid);
+        // ESP_LOGI(TAG, "station " MACSTR " join, AID=%d", MAC2STR(event->mac), (int)event->aid);
         s_ap_staconnected_flag = true;
         break;
       }
 
       case WIFI_EVENT_AP_STADISCONNECTED: {
         wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *) event_data;
-        //ESP_LOGI(TAG, "station " MACSTR " leave, AID=%d", MAC2STR(event->mac), ((int)event->aid);
+        // ESP_LOGI(TAG, "station " MACSTR " leave, AID=%d", MAC2STR(event->mac), ((int)event->aid);
         s_ap_staconnected_flag = false;
         break;
       }
@@ -949,7 +1165,7 @@ system_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, v
     ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
     ESP_LOGI(TAG, "Connected with IP Address: " IPSTR, IP2STR(&event->ip_info.ip));
     g_state = MAIN_STATE_WORK;
-    // Signal main application to continue execution 
+    // Signal main application to continue execution
     xEventGroupSetBits(g_wifi_event_group, WIFI_CONNECTED_EVENT);
   }
   else if (event_base == ALPHA_EVENT) {
@@ -991,7 +1207,7 @@ vscp_heartbeat_task(void *pvParameter)
   int recv_seq = 0;
 
   // Create Heartbeat event
-  if (VSCP_ERROR_SUCCESS != (ret = droplet_build_l1_heartbeat(buf, size, g_node_guid))) {
+  if (VSCP_ERROR_SUCCESS != (ret = droplet_build_l1_heartbeat(buf, size, g_persistent.nodeGuid))) {
     ESP_LOGE(TAG, "Could not create heartbeat event, will exit task. VSCP rv %d", ret);
     goto ERROR;
   }
@@ -1000,6 +1216,7 @@ vscp_heartbeat_task(void *pvParameter)
 
   while (true) {
 
+    ESP_LOGI(TAG, "Send heartbeat.");
     ret = droplet_send(dest_addr, false, false, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
     if (ret != ESP_OK) {
       ESP_LOGE(TAG, "Failed to send heartbeat. ret = %d", ret);
@@ -1088,111 +1305,14 @@ app_main(void)
   // **************************************************************************
 
   // Init persistent storage
-  ESP_LOGE(TAG, "Persistent storage ... ");
+  ESP_LOGI(TAG, "Persistent storage ... ");
 
   rv = nvs_open("config", NVS_READWRITE, &g_nvsHandle);
   if (rv != ESP_OK) {
     ESP_LOGE(TAG, "Error (%s) opening NVS handle!\n", esp_err_to_name(rv));
   }
   else {
-
-    // Read
-    ESP_LOGI(TAG, "Reading boot counter from NVS ... ");
-    g_boot_counter = 0; // value will default to 0, if not set yet in NVS
-
-    rv = nvs_get_u32(g_nvsHandle, "boot_counter", &g_boot_counter);
-    switch (rv) {
-
-      case ESP_OK:
-        ESP_LOGI(TAG, "Boot counter = %d\n", (int)g_boot_counter);
-        break;
-
-      case ESP_ERR_NVS_NOT_FOUND:
-        ESP_LOGE(TAG, "The value is not initialized yet!\n");
-        break;
-
-      default:
-        ESP_LOGE(TAG, "Error (%s) reading!\n", esp_err_to_name(rv));
-    }
-
-    // Write
-    ESP_LOGI(TAG, "Updating boot counter in NVS ... ");
-    g_boot_counter++;
-    rv = nvs_set_u32(g_nvsHandle, "boot_counter", g_boot_counter);
-    if (rv != ESP_OK) {
-      ESP_LOGI(TAG, "Failed!\n");
-    }
-    else {
-      ESP_LOGI(TAG, "Done\n");
-    }
-
-    // Commit written value.
-    // After setting any values, nvs_commit() must be called to ensure changes
-    // are written to flash storage. Implementations may write to storage at
-    // other times, but this is not guaranteed.
-    ESP_LOGI(TAG, "Committing updates in NVS ... ");
-    rv = nvs_commit(g_nvsHandle);
-    if (rv != ESP_OK) {
-      ESP_LOGI(TAG, "Failed!\n");
-    }
-    else {
-      ESP_LOGI(TAG, "Done\n");
-    }
-
-    // TODO remove !!!!
-    char buf[32];
-    size_t length = sizeof(buf);
-    rv            = nvs_get_str(g_nvsHandle, "username", buf, &length);
-    if (rv != ESP_OK) {
-      ESP_LOGE(TAG, "Failed to read 'Username' will be set to default. ret=%d", rv);
-      nvs_set_str(g_nvsHandle, "username", DEFAULT_TCPIP_USER);
-    }
-    ESP_LOGI(TAG, "Username: %s", buf);
-    
-    length = sizeof(buf);
-    rv     = nvs_get_str(g_nvsHandle, "password", buf, &length);
-    if (rv != ESP_OK) {
-      ESP_LOGE(TAG, "Failed to read 'password' will be set to default. ret=%d", rv);
-      nvs_set_str(g_nvsHandle, "password", DEFAULT_TCPIP_PASSWORD);
-    }
-    ESP_LOGI(TAG, "Password: %s", buf);
-    length = 16;
-    rv     = nvs_get_blob(g_nvsHandle, "guid", g_node_guid, &length);
-
-    length = rv = nvs_get_blob(g_nvsHandle, "discovery-cache", g_node_guid, &length);
-
-    // If GUID is all zero construct VSCP GUID
-    if (!(g_node_guid[0] | g_node_guid[1] | g_node_guid[2] | g_node_guid[3] | g_node_guid[4] | g_node_guid[5] |
-          g_node_guid[6] | g_node_guid[7] | g_node_guid[8] | g_node_guid[9] | g_node_guid[10] | g_node_guid[11] |
-          g_node_guid[12] | g_node_guid[13] | g_node_guid[14] | g_node_guid[15])) {
-      g_node_guid[0] = 0xff;
-      g_node_guid[1] = 0xff;
-      g_node_guid[2] = 0xff;
-      g_node_guid[3] = 0xff;
-      g_node_guid[4] = 0xff;
-      g_node_guid[5] = 0xff;
-      g_node_guid[6] = 0xff;
-      g_node_guid[7] = 0xfe;
-      rv             = esp_efuse_mac_get_default(g_node_guid + 8);
-      ESP_LOGD(TAG,
-               "Constructed GUID: %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
-               g_node_guid[0],
-               g_node_guid[1],
-               g_node_guid[2],
-               g_node_guid[3],
-               g_node_guid[4],
-               g_node_guid[5],
-               g_node_guid[6],
-               g_node_guid[7],
-               g_node_guid[8],
-               g_node_guid[9],
-               g_node_guid[10],
-               g_node_guid[11],
-               g_node_guid[12],
-               g_node_guid[13],
-               g_node_guid[14],
-               g_node_guid[15]);
-    }
+    readPersistentConfigs();
   }
 
   g_ctrl_task_sem = xSemaphoreCreateBinary();
@@ -1227,9 +1347,9 @@ app_main(void)
   // Initialize Wi-Fi including netif with default config
   g_netif = esp_netif_create_default_wifi_sta();
 
-// #ifdef CONFIG_PROV_TRANSPORT_SOFTAP
-//   g_netif = esp_netif_create_default_wifi_ap();  
-// #endif // CONFIG_PROV_TRANSPORT_SOFTAP
+  // #ifdef CONFIG_PROV_TRANSPORT_SOFTAP
+  //   g_netif = esp_netif_create_default_wifi_ap();
+  // #endif // CONFIG_PROV_TRANSPORT_SOFTAP
 
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -1269,9 +1389,13 @@ app_main(void)
   {
     EventBits_t ret;
     uint8_t cnt = 20; // 20 seconds until reboot due to no IP address
-    while (!xEventGroupWaitBits(g_wifi_event_group, WIFI_CONNECTED_EVENT, false, true, 1000 / portTICK_PERIOD_MS)) {      
-      if (--cnt == 0) esp_restart();
-      ESP_LOGI(TAG,"Waiting for IP address. %d", cnt);
+    while (!xEventGroupWaitBits(g_wifi_event_group, WIFI_CONNECTED_EVENT, false, true, 1000 / portTICK_PERIOD_MS)) {
+      if (--cnt == 0) {
+        esp_wifi_disconnect();        
+        esp_restart();
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+      }
+      ESP_LOGI(TAG, "Waiting for IP address. %d", cnt);
     }
   }
   esp_event_post(/*_to(alpha_loop_handle,*/ ALPHA_EVENT, ALPHA_GET_IP_ADDRESS_STOP, NULL, 0, portMAX_DELAY);
@@ -1279,6 +1403,26 @@ app_main(void)
   if (led_indicator_start(g_led_handle, BLINK_CONNECTED) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to start indicator light");
   }
+
+
+// ----------------------------------------------------------------------------
+
+#if CONFIG_WRITE_TO_STDOUT
+  g_write2Stdout  = 1;
+#endif
+
+#if CONFIG_ENABLE_UDP_LOG
+	ESP_ERROR_CHECK(udp_logging_init( CONFIG_LOG_UDP_SERVER_IP, CONFIG_LOG_UDP_SERVER_PORT, g_write2Stdout ));
+#endif // CONFIG_ENABLE_UDP_LOG
+
+#if CONFIG_ENABLE_TCP_LOG
+	ESP_ERROR_CHECK(tcp_logging_init( CONFIG_LOG_TCP_SERVER_IP, CONFIG_LOG_TCP_SERVER_PORT, g_write2Stdout ));
+#endif // CONFIG_ENABLE_TCP_LOG
+
+#if CONFIG_ENABLE_MQTT_LOG
+	ESP_ERROR_CHECK(mqtt_logging_init( CONFIG_LOG_MQTT_SERVER_URL, CONFIG_LOG_MQTT_PUB_TOPIC, g_write2Stdout ));
+#endif // CONFIG_ENABLE_MQTT_LOG
+
 
   // Initialize Spiffs for web pages
   ESP_LOGI(TAG, "Initializing SPIFFS");
@@ -1353,8 +1497,11 @@ app_main(void)
                                       .bForwardSwitchChannel  = false,
                                       .sizeQueue              = 32,
                                       .bFilterAdjacentChannel = false,
-                                      .filterWeakSignal       = false,
-                                      .pmk                    = { "01234567890012345678900123456789001" } };
+                                      .filterWeakSignal       = false 
+                                    };
+
+  // Set primary key
+  memcpy(droplet_config, g_persistent.pmk, 32 );
 
   if (ESP_OK != droplet_init(&droplet_config)) {
     ESP_LOGE(TAG, "Failed to initialize espnow");
@@ -1363,9 +1510,9 @@ app_main(void)
   ESP_LOGI(TAG, "espnow initializated");
 
   // Start heartbeat task vscp_heartbeat_task
-  xTaskCreate(&vscp_heartbeat_task, "vscp_heartbeat_task", 2024, NULL, 5, NULL);
+  xTaskCreate(&vscp_heartbeat_task, "vscp_heartbeat_task", 4096, NULL, 5, NULL);
 
-  //startOTA();
+  // startOTA();
 
   // xTaskCreate(vscp_espnow_send_task, "vscp_espnow_send_task", 4096, NULL, 4, NULL);
   // xTaskCreate(vscp_espnow_recv_task, "vscp_espnow_recv_task", 2048, NULL, 4, NULL);
@@ -1391,7 +1538,7 @@ app_main(void)
     Start main application loop now
   */
 
-  if (VSCP_ERROR_SUCCESS != (ret = droplet_build_l1_heartbeat(buf, size, g_node_guid))) {
+  if (VSCP_ERROR_SUCCESS != (ret = droplet_build_l1_heartbeat(buf, size, g_persistent.nodeGuid))) {
     ESP_LOGE(TAG, "Could not create heartbeat event, will exit task. VSCP rv %d", ret);
   }
 
@@ -1417,7 +1564,7 @@ droplet_parse_vscp_json(obj, &ex);
 char str[512];
 droplet_create_vscp_json(str, &ex); */
 
-  //test();
+  // test();
 
   while (1) {
     // esp_task_wdt_reset();

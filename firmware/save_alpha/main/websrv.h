@@ -1,10 +1,10 @@
 /*
-  VSCP Wireless CAN4VSCP Gateway (VSCP-WCANG)
+  VSCP droplet alpha webserver
 
   This file is part of the VSCP (https://www.vscp.org)
 
   The MIT License (MIT)
-  Copyright © 2022 Ake Hedman, the VSCP project <info@vscp.org>
+  Copyright © 2022-2023 Ake Hedman, the VSCP project <info@vscp.org>
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -32,24 +32,48 @@
   1. "curl 192.168.43.130:80/hello"  - tests the GET "\hello" handler
   2. "curl -X POST --data-binary @anyfile 192.168.43.130:80/echo > tmpfile"
       * "anyfile" is the file being sent as request body and "tmpfile" is where the body of the response is saved
-      * since the server echoes back the request body, the two files should be same, as can be confirmed using : "cmp anyfile tmpfile"
+      * since the server echoes back the request body, the two files should be same, as can be confirmed using : "cmp
+  anyfile tmpfile"
   3. "curl -X PUT -d "0" 192.168.43.130:80/ctrl" - disable /hello and /echo handlers
   4. "curl -X PUT -d "1" 192.168.43.130:80/ctrl" -  enable /hello and /echo handlers
 
 */
+cxccxc
+#ifndef __VSCP_ALPHA_WEBSRV_H__
+#define __VSCP_ALPHA_WEBSRV_H__
 
-#ifndef __VSCP_WCANG_WEBSRV_H__
-#define __VSCP_WCANG_WEBSRV_H__
+fgfgfg
+
+/*>>
+  Page start HTML
+  Parameter 1: Page head
+  Parameter 2: Section header
+*/
+#define WEBPAGE_START_TEMPLATE "<!DOCTYPE html><html lang=\"en\" class=\"\"><head><meta charset='utf-8'>" \
+"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,user-scalable=no\" /><title>Droplet " \
+"Alpha node - Main Menu</title><link rel=\"icon\" href=\"favicon.ico\">" \
+"<link rel=\"stylesheet\" href=\"style.css\" /></head><body><div " \
+"style='text-align:left;display:inline-block;color:#eaeaea;min-width:340px;'>" \
+"<div style='text-align:center;color:#eaeaea;'><noscript>To use Droplet admin interface, please enable " \
+"JavaScript<br></noscript><h3>%s</h3></div>" \
+"<div style='text-align:center;color:#f7f1a6;'><h4>%s</h4></div>"
+
+/*>>
+  Page end HTML
+  Parameter 1: Page head
+  Parameter 2: Section header
+*/
+#define WEBPAGE_END_TEMPLATE "jhjh"
 
 #define CONFIG_EXAMPLE_BASIC_AUTH_USERNAME "admin"
 #define CONFIG_EXAMPLE_BASIC_AUTH_PASSWORD "secret"
+
+#define HTTPD_401 "401 UNAUTHORIZED" /*!< HTTP Response 401 */
 
 typedef struct {
   char *username;
   char *password;
 } basic_auth_info_t;
-
-#define HTTPD_401      "401 UNAUTHORIZED"           /*!< HTTP Response 401 */
 
 /*!
   Start the webserver
@@ -67,8 +91,5 @@ start_webserver(void);
 
 esp_err_t
 stop_webserver(httpd_handle_t server);
-
-
-
 
 #endif

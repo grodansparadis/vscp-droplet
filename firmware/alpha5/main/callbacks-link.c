@@ -50,7 +50,7 @@
 
 // Defines from demo.c
 
-extern uint8_t g_node_guid[16];
+extern node_persistent_config_t g_persistent;
 //extern vscp_fifo_t fifoEventsIn;
 extern vscpctx_t g_ctx[MAX_TCP_CONNECTIONS];
 
@@ -169,7 +169,7 @@ vscp_link_callback_get_interface(const void* pdata, uint16_t index, struct vscp_
 
   pif->idx = index;
   pif->type = VSCP_INTERFACE_TYPE_INTERNAL;
-  memcpy(pif->guid, g_node_guid, 16);
+  memcpy(pif->guid, g_persistent.nodeGuid, 16);
   strncpy(pif->description, "Interface for the device itself", sizeof(pif->description));
 
   // We have no interfaces
@@ -531,7 +531,7 @@ vscp_link_callback_get_guid(const void* pdata, uint8_t *pguid)
     return VSCP_ERROR_INVALID_POINTER;
   }
 
-  memcpy(pguid, g_node_guid, 16);
+  memcpy(pguid, g_persistent.nodeGuid, 16);
   return VSCP_ERROR_SUCCESS; 
 }
 
@@ -546,7 +546,7 @@ vscp_link_callback_set_guid(const void* pdata, uint8_t *pguid)
     return VSCP_ERROR_INVALID_POINTER;
   }
 
-  memcpy(g_node_guid, pguid, 16);
+  memcpy(g_persistent.nodeGuid, pguid, 16);
   return VSCP_ERROR_SUCCESS; 
 }
 
