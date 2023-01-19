@@ -125,6 +125,7 @@ typedef enum {
   ALPHA_LOG_STD,  /*!< Standard output */
   ALPHA_LOG_UDP,  /*!< UDP */
   ALPHA_LOG_TCP,  /*!< TCP */ 
+  ALPHA_LOG_HTTP, /*!< HTTP */ 
   ALPHA_LOG_MQTT, /*!< MQTT */
   ALPHA_LOG_VSCP  /*!< VSCP */
 } alpha_log_output_t;
@@ -141,9 +142,9 @@ typedef struct {
   // Logging
   uint8_t logwrite2Stdout;  // Enable write Logging to STDOUT
   esp_log_level_t logLevel; // 'ERROR' is default
-  uint8_t logOutput;        // 0=STDOUT, 1=UDP, 3=TCP, 3=MQTT, 4=VSCP
+  uint8_t logType;          // STDOUT / UDP / TCP / HTTP / MQTT /VSCP
   uint8_t logRetries;       // Number of log log retries
-  char logDestination[32];  // For UDP/TCP/HTML
+  char logUrl[32];          // For UDP/TCP/HTML
   short logPort;            // Port for UDP
   char logMqttTopic[64];    //  MQTT topic
 

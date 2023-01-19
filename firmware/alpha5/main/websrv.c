@@ -2008,59 +2008,60 @@ config_log_get_handler(httpd_req_t *req)
   sprintf(buf, WEBPAGE_START_TEMPLATE, g_persistent.nodeName, "Logging Configuration");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  sprintf(buf, "<div><form id=but3 class=\"button\" action='/docfgdroplet' method='get'><fieldset>");
+  sprintf(buf, "<div><form id=but3 class=\"button\" action='/docfglog' method='get'><fieldset>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
   sprintf(buf,
-          "<input type=\"checkbox\" id=\"stdout\"name=\"stdout\" value=\"%s\"><label for=\"stdout\"> Log to stdout</label>",
+          "<input type=\"checkbox\" id=\"stdout\"name=\"stdout\" value=\"%s\" ",
           g_persistent.logwrite2Stdout ? "true" : "false");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
-
-  sprintf(buf,"<br /><br />Log to:<select type=\"checkbox\" name=\"dest\" ");
-  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);  
-  sprintf(buf,"<option value=\"0\" %s>none</option>", (ALPHA_LOG_NONE == g_persistent.logOutput) ? "selected":"");
-  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
-  sprintf(buf,"<option value=\"1\" %s>stdout</option>", (ALPHA_LOG_STD == g_persistent.logOutput) ? "selected":"");
-  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
-  sprintf(buf,"<option value=\"2\" %s>UDP</option>", (ALPHA_LOG_UDP == g_persistent.logOutput) ? "selected":"");
-  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
-  sprintf(buf,"<option value=\"3\" %s>TCP</option>", (ALPHA_LOG_TCP == g_persistent.logOutput) ? "selected":"");
-  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
-  sprintf(buf,"<option value=\"4\" %s>MQTT</option>", (ALPHA_LOG_MQTT == g_persistent.logOutput) ? "selected":"");
-  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
-  sprintf(buf,"<option value=\"5\" %s>VSCP</option>", (ALPHA_LOG_VSCP == g_persistent.logOutput) ? "selected":"");
-  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
-  sprintf(buf,"></select>");
+  sprintf(buf, "%s><label for=\"stdout\"> Log to stdout</label>", g_persistent.logwrite2Stdout ? "checked" : "");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  sprintf(buf,
-          "Log level:<select type=\"checkbox\" name=\"level\" "
-          "<option value=\"0\">error</option>"
-          "<option value=\"1\">warning</option>"
-          "<option value=\"2\">info</option>"
-          "<option value=\"3\">debug</option>"
-          "<option value=\"4\">verbose</option>"
-          "></select>");
+  sprintf(buf, "<br /><br />Log to:<select type=\"checkbox\" name=\"type\" ");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "<option value=\"0\" %s>none</option>", (ALPHA_LOG_NONE == g_persistent.logType) ? "selected" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "<option value=\"1\" %s>stdout</option>", (ALPHA_LOG_STD == g_persistent.logType) ? "selected" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "<option value=\"2\" %s>UDP</option>", (ALPHA_LOG_UDP == g_persistent.logType) ? "selected" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "<option value=\"3\" %s>TCP</option>", (ALPHA_LOG_TCP == g_persistent.logType) ? "selected" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "<option value=\"4\" %s>HTTP</option>", (ALPHA_LOG_HTTP == g_persistent.logType) ? "selected" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "<option value=\"5\" %s>MQTT</option>", (ALPHA_LOG_MQTT == g_persistent.logType) ? "selected" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "<option value=\"6\" %s>VSCP</option>", (ALPHA_LOG_VSCP == g_persistent.logType) ? "selected" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "></select>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  sprintf(buf,
-          "Max retries:<input type=\"text\" name=\"retries\" value=\"%d\" >",
-          g_persistent.logRetries);
+  sprintf(buf, "Log level:<select type=\"checkbox\" name=\"level\" ");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "<option value=\"1\" %s>error</option>", (ESP_LOG_ERROR == g_persistent.logLevel) ? "selected" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "<option value=\"2\" %s>warning</option>", (ESP_LOG_WARN == g_persistent.logLevel) ? "selected" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "<option value=\"3\" %s>info</option>", (ESP_LOG_INFO == g_persistent.logLevel) ? "selected" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "<option value=\"4\" %s>  debug</option>", (ESP_LOG_DEBUG == g_persistent.logLevel) ? "selected" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "<option value=\"5\" %s>verbose</option>", (ESP_LOG_VERBOSE == g_persistent.logLevel) ? "selected" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "></select>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  sprintf(buf,
-          "Destination (IP Addr):<input type=\"text\" name=\"address\" value=\"%s\" >",
-          g_persistent.logDestination);
+  sprintf(buf, "Max retries:<input type=\"text\" name=\"retries\" value=\"%d\" >", g_persistent.logRetries);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  sprintf(buf,
-          "Port:<input type=\"text\" name=\"port\" value=\"%d\" >",
-          g_persistent.logPort);
+  sprintf(buf, "Destination (IP Addr):<input type=\"text\" name=\"url\" value=\"%s\" >", g_persistent.logUrl);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  sprintf(buf,
-          "MQTT Topic:<input type=\"text\" name=\"topic\" value=\"%s\" >",
-          g_persistent.logMqttTopic);
+  sprintf(buf, "Port:<input type=\"text\" name=\"port\" value=\"%d\" >", g_persistent.logPort);
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf, "MQTT Topic:<input type=\"text\" name=\"topic\" value=\"%s\" >", g_persistent.logMqttTopic);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
   sprintf(buf, "<button class=\"bgrn bgrn:hover\">Save</button></fieldset></form></div>");
@@ -2101,64 +2102,115 @@ do_config_log_get_handler(httpd_req_t *req)
         free(buf);
       }
 
-      // name
-      if (ESP_OK == (rv = httpd_query_key_value(buf, "node_name", param, WEBPAGE_PARAM_SIZE))) {
+      // stdout
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "stdout", param, WEBPAGE_PARAM_SIZE))) {
+
+        ESP_LOGI(TAG, "Found name query parameter => stdout=%s", param);
+
+        if (NULL != strstr(param, "true")) {
+          g_persistent.logwrite2Stdout = 1;
+        }
+        else {
+          g_persistent.logwrite2Stdout = 0;
+        }
+        rv = nvs_set_u8(g_nvsHandle, "log_stdout", g_persistent.logwrite2Stdout);
+        if (rv != ESP_OK) {
+          ESP_LOGE(TAG, "Failed to update log-stdout");
+        }
+      }
+      else {
+        ESP_LOGE(TAG, "Error getting stdout => rv=%d", rv);
+      }
+
+      // type
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "type", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found name query parameter => type=%s", param);
+        g_persistent.logType = atoi(param);
+
+        rv = nvs_set_u8(g_nvsHandle, "log_type", g_persistent.logType);
+        if (rv != ESP_OK) {
+          ESP_LOGE(TAG, "Failed to update log type");
+        }
+      }
+      else {
+        ESP_LOGE(TAG, "Error getting log type => rv=%d", rv);
+      }
+
+      // level
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "level", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found name query parameter => level=%s", param);
+        g_persistent.logLevel = atoi(param);
+
+        rv = nvs_set_u8(g_nvsHandle, "log_level", g_persistent.logLevel);
+        if (rv != ESP_OK) {
+          ESP_LOGE(TAG, "Failed to update log level");
+        }
+      }
+      else {
+        ESP_LOGE(TAG, "Error getting log level => rv=%d", rv);
+      }
+
+      // retries
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "retries", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found name query parameter => retries=%s", param);
+        g_persistent.logRetries = atoi(param);
+
+        rv = nvs_set_u8(g_nvsHandle, "log_retries", g_persistent.logRetries);
+        if (rv != ESP_OK) {
+          ESP_LOGE(TAG, "Failed to update log retries");
+        }
+      }
+      else {
+        ESP_LOGE(TAG, "Error getting log retries => rv=%d", rv);
+      }
+
+      // port
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "port", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found name query parameter => port=%s", param);
+        g_persistent.logPort = atoi(param);
+
+        rv = nvs_set_u8(g_nvsHandle, "log_port", g_persistent.logPort);
+        if (rv != ESP_OK) {
+          ESP_LOGE(TAG, "Failed to update log port");
+        }
+      }
+      else {
+        ESP_LOGE(TAG, "Error getting log port => rv=%d", rv);
+      }
+
+      // url
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "url", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found name query parameter => url=%s", param);
+        strncpy(g_persistent.logUrl, param, sizeof(g_persistent.logUrl));
+
+        rv = nvs_set_str(g_nvsHandle, "log_url", g_persistent.logUrl);
+        if (rv != ESP_OK) {
+          ESP_LOGE(TAG, "Failed to save log URL");
+        }
+      }
+      else {
+        ESP_LOGE(TAG, "Error getting log port => rv=%d", rv);
+      }
+
+      // topic
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "topic", param, WEBPAGE_PARAM_SIZE))) {
         char *pdecoded = urlDecode(param);
         if (NULL == pdecoded) {
           free(param);
           free(buf);
           return ESP_ERR_ESPNOW_NO_MEM;
         }
-        ESP_LOGI(TAG, "Found name query parameter => name=%s", pdecoded);
-        strncpy(g_persistent.nodeName, pdecoded, 31);
+        ESP_LOGI(TAG, "Found name query parameter => topic=%s", pdecoded);
+        strncpy(g_persistent.logMqttTopic, pdecoded, sizeof(g_persistent.logMqttTopic));
         free(pdecoded);
-        // Write changed value to persistent storage
-        rv = nvs_set_str(g_nvsHandle, "node_name", g_persistent.nodeName);
+
+        rv = nvs_set_str(g_nvsHandle, "log_mqtt_topic", g_persistent.logMqttTopic);
         if (rv != ESP_OK) {
-          ESP_LOGE(TAG, "Failed to update node name");
+          ESP_LOGE(TAG, "Failed to save log topic");
         }
       }
       else {
-        ESP_LOGE(TAG, "Error getting node_name => rv=%d", rv);
-      }
-
-      // strtdly
-      if (ESP_OK == (rv = httpd_query_key_value(buf, "strtdly", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => strtdly=%s", param);
-        g_persistent.startDelay = atoi(param);
-        // Write changed value to persistent storage
-        rv = nvs_set_u8(g_nvsHandle, "start_delay", g_persistent.startDelay);
-        if (rv != ESP_OK) {
-          ESP_LOGE(TAG, "Failed to update start delay");
-        }
-      }
-      else {
-        ESP_LOGE(TAG, "Error getting strtdly => rv=%d", rv);
-      }
-
-      // GUID
-      if (ESP_OK == (rv = httpd_query_key_value(buf, "guid", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => guid=%s", param);
-
-        char *p = urlDecode(param);
-        ESP_LOGI(TAG, "URL Decode => guid=%s", p);
-        if (VSCP_ERROR_SUCCESS != vscp_fwhlp_parseGuid(g_persistent.nodeGuid, p, NULL)) {
-          ESP_LOGE(TAG, "Failed to read GUID");
-        }
-
-        // Write changed value to persistent storage
-        rv = nvs_set_blob(g_nvsHandle, "guid", g_persistent.nodeGuid, 16);
-        if (rv != ESP_OK) {
-          ESP_LOGE(TAG, "Failed to write node GUID to nvs. rv=%d", rv);
-        }
-      }
-      else {
-        ESP_LOGE(TAG, "Error getting guid => rv=%d", rv);
-      }
-
-      rv = nvs_commit(g_nvsHandle);
-      if (rv != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to commit updates to nvs\n");
+        ESP_LOGE(TAG, "Error getting log topic => rv=%d", rv);
       }
 
       free(param);
@@ -2167,7 +2219,7 @@ do_config_log_get_handler(httpd_req_t *req)
     free(buf);
   }
   const char *resp_str =
-    "<html><head><meta charset='utf-8'><meta http-equiv=\"refresh\" content=\"1;url=cfgmodule\" "
+    "<html><head><meta charset='utf-8'><meta http-equiv=\"refresh\" content=\"1;url=cfglog\" "
     "/><style>" WEBPAGE_STYLE_CSS "</style></head><body><h2 class=\"name\">saving module data...</h2></body></html>";
   httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
 

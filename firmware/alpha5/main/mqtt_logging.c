@@ -5,6 +5,8 @@
 	 Unless required by applicable law or agreed to in writing, this
 	 software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
 	 CONDITIONS OF ANY KIND, either express or implied.
+
+   https://github.com/nopnop2002/esp-idf-net-logging
 */
 
 #include <stdio.h>
@@ -22,6 +24,8 @@
 #include "mqtt_client.h"
 
 #include "net_logging.h"
+
+extern esp_mqtt_client_handle_t g_mqtt_client;
 
 EventGroupHandle_t mqtt_status_event_group;
 #define MQTT_CONNECTED_BIT BIT2
@@ -81,6 +85,7 @@ void mqtt_pub(void *pvParameters)
 	mqtt_status_event_group = xEventGroupCreate();
 	configASSERT( mqtt_status_event_group );
 	
+  /*
 	// Set client id from mac
 	uint8_t mac[8];
 	ESP_ERROR_CHECK(esp_base_mac_addr_get(mac));
@@ -101,6 +106,7 @@ void mqtt_pub(void *pvParameters)
 	};
 #endif
 
+
 	// Connect broker
 	esp_mqtt_client_handle_t mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
 
@@ -114,6 +120,7 @@ void mqtt_pub(void *pvParameters)
 	// Wait for connection
 	xEventGroupWaitBits(mqtt_status_event_group, MQTT_CONNECTED_BIT, false, true, portMAX_DELAY);
 	//printf("Connected to MQTT Broker\n");
+*/
 
 	// Send ready to receive notify
 	char buffer[xItemSize];
@@ -130,7 +137,7 @@ void mqtt_pub(void *pvParameters)
 				// Remove trailing LF
 				if (buffer[received-1] == 0x0a) received = received - 1;
 				if (received) {
-					esp_mqtt_client_publish(mqtt_client, param.topic, buffer, received, 1, 0);
+					esp_mqtt_client_publish(g_mqtt_client, param.topic, buffer, received, 1, 0);
 					//printf("sent publish successful\n");
 				}
 			} else {
@@ -143,7 +150,7 @@ void mqtt_pub(void *pvParameters)
 	} // end while
 
 	// Stop connection
-	esp_mqtt_client_stop(mqtt_client);
+	//esp_mqtt_client_stop(mqtt_client);
 	vTaskDelete(NULL);
 
 }

@@ -43,15 +43,16 @@
 #include "mqtt_client.h"
 #include "esp_tls.h"
 #include "esp_ota_ops.h"
+#include "esp_mac.h" // esp_base_mac_addr_get
 #include <sys/param.h>
 
 #include <vscp.h>
 
 #include "mqtt.h"
 
-static const char *TAG = "ALPHA MQTT";
+static const char *TAG = "MQTT";
 
-static esp_mqtt_client_handle_t g_mqtt_client;
+esp_mqtt_client_handle_t g_mqtt_client;
 
 // #if CONFIG_BROKER_CERTIFICATE_OVERRIDDEN == 1
 // static const uint8_t mqtt_eclipseprojects_io_pem_start[] =
@@ -188,22 +189,28 @@ mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, 
 void
 mqtt_start(void)
 {
-  esp_log_level_set("*", ESP_LOG_INFO);
-  esp_log_level_set("esp-tls", ESP_LOG_VERBOSE);
-  esp_log_level_set("MQTT_CLIENT", ESP_LOG_VERBOSE);
-  esp_log_level_set("MQTT_EXAMPLE", ESP_LOG_VERBOSE);
-  esp_log_level_set("TRANSPORT_BASE", ESP_LOG_VERBOSE);
-  esp_log_level_set("TRANSPORT", ESP_LOG_VERBOSE);
-  esp_log_level_set("OUTBOX", ESP_LOG_VERBOSE);
+  // Set client id from mac
+	uint8_t mac[8];
+	ESP_ERROR_CHECK(esp_base_mac_addr_get(mac));
+	char client_id[64];
+	sprintf(client_id, "pub-%02x%02x%02x%02x%02x%02x", mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+	//printf("client_id=[%s]\n", client_id);
 
-  // test.mosquitto.org
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
   const esp_mqtt_client_config_t mqtt_cfg = {
     .broker                              = { .address.uri = "mqtt://192.168.1.7:1883", .address.port = 1883,
                                              /*.verification.certificate = (const char *) mqtt_eclipse_io_pem_start*/ },
     .credentials.username                = "vscp",
-    .credentials.client_id               = "ESP32 Alpha",
+    .credentials.client_id               = client_id,
     .credentials.authentication.password = "secret",
   };
+  #else
+    esp_mqtt_client_config_t mqtt_cfg = {
+		.uri = "mqtt://192.168.1.7:1883",
+		.event_handle = mqtt_event_handler,
+		.client_id = client_id
+  #endif
 
   ESP_LOGI(TAG, "[APP] Free memory: %lu bytes", esp_get_free_heap_size());
   g_mqtt_client = esp_mqtt_client_init(&mqtt_cfg);

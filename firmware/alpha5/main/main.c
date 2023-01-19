@@ -209,18 +209,14 @@ node_persistent_config_t g_persistent = {
   .startDelay = 2,
   .bootCnt    = 0,
 
-// Logging
-#if CONFIG_WRITE_TO_STDOUT
+  // Logging
   .logwrite2Stdout = 1,
-#else
-  .logwrite2Stdout = 0,
-#endif
-  .logLevel       = ESP_LOG_INFO,
-  .logOutput      = ALPHA_LOG_UDP,
-  .logRetries     = 5,
-  .logDestination = "255.255.255.255",
-  .logPort        = 6789,
-  .logMqttTopic   = "%guid/log",
+  .logLevel        = ESP_LOG_INFO,
+  .logType         = ALPHA_LOG_UDP,
+  .logRetries      = 5,
+  .logUrl          = "255.255.255.255",
+  .logPort         = 6789,
+  .logMqttTopic    = "%guid/log",
 
   // Web server
   .webPort     = 80,
@@ -338,27 +334,77 @@ readPersistentConfigs(void)
       break;
   }
 
-  // Logging
-  esp_log_level_set("*", ESP_LOG_INFO);
-  rv = nvs_get_u8(g_nvsHandle, "log-level", &g_persistent.logLevel);
-  switch (rv) {
+  // Logging ------------------------------------------------------------------
 
-    case ESP_OK:
-      ESP_LOGI(TAG, "Log level = %d", g_persistent.logLevel);
-      // esp_log_level_set("*", g_persistent.logLevel);   // TODO!!!! ENABLE in production
-      break;
-
-    case ESP_ERR_NVS_NOT_FOUND:
-      rv = nvs_set_u8(g_nvsHandle, "log-level", ESP_LOG_ERROR);
-      if (rv != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to update log-level");
-      }
-      break;
-
-    default:
-      ESP_LOGE(TAG, "Error (%s) reading!", esp_err_to_name(rv));
-      break;
+  // logwrite2Stdout
+  rv = nvs_get_u8(g_nvsHandle, "log_stdout", &g_persistent.logwrite2Stdout);
+  if (ESP_OK != rv) {
+    rv = nvs_set_u8(g_nvsHandle, "log_stdout", g_persistent.logwrite2Stdout);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to update log-stdout");
+    }
   }
+
+  // logLevel
+  esp_log_level_set("*", ESP_LOG_INFO);
+  rv = nvs_get_u8(g_nvsHandle, "log_level", &g_persistent.logLevel);
+  if (ESP_OK != rv) {
+    rv = nvs_set_u8(g_nvsHandle, "log_level", g_persistent.logLevel);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to update log-level");
+    }
+  }
+
+  // logType
+  rv = nvs_get_u8(g_nvsHandle, "log_type", &g_persistent.logType);
+  if (ESP_OK != rv) {
+    rv = nvs_set_u8(g_nvsHandle, "log_type", g_persistent.logType);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to update log-type");
+    }
+  }
+
+  // logRetries
+  rv = nvs_get_u8(g_nvsHandle, "log_retries", &g_persistent.logRetries);
+  if (ESP_OK != rv) {
+    rv = nvs_set_u8(g_nvsHandle, "log:retries", g_persistent.logRetries);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to update log-retries");
+    }
+  }
+
+  // logUrl
+  length = sizeof(g_persistent.logUrl);
+  rv     = nvs_get_str(g_nvsHandle, "log_url", g_persistent.logUrl, &length);
+  if (rv != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to read 'log URL' will be set to default. ret=%d", rv);
+    rv = nvs_set_str(g_nvsHandle, "log_url", g_persistent.logUrl);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to save log URL");
+    }
+  }
+
+  // logPort
+  rv = nvs_get_u8(g_nvsHandle, "log_port", &g_persistent.logPort);
+  if (ESP_OK != rv) {
+    rv = nvs_set_u8(g_nvsHandle, "log_port", g_persistent.logPort);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to update log_port");
+    }
+  }
+
+  // logMqttTopic
+  length = sizeof(g_persistent.logMqttTopic);
+  rv     = nvs_get_str(g_nvsHandle, "log_mqtt_topic", g_persistent.logMqttTopic, &length);
+  if (rv != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to read 'log MQTT topic' will be set to default. ret=%d", rv);
+    rv = nvs_set_str(g_nvsHandle, "log_mqtt_topic", g_persistent.logMqttTopic);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to save log MQTT topic");
+    }
+  }
+
+  // VSCP Link ----------------------------------------------------------------
 
   // VSCP Link Username
   rv = nvs_get_str(g_nvsHandle, "vscp_username", buf, &length);
@@ -1413,28 +1459,35 @@ app_main(void)
     ESP_LOGE(TAG, "Failed to start indicator light");
   }
 
+  // Start web server
+  httpd_handle_t server = start_webserver();
+
+  // Start MQTT client
+  mqtt_start();
+
   // ----------------------------------------------------------------------------
   //                                  Logging
   // ----------------------------------------------------------------------------
 
-  switch (g_persistent.logOutput) {
+  switch (g_persistent.logType) {
 
     case ALPHA_LOG_NONE:
       break;
 
     case ALPHA_LOG_UDP:
-      ESP_ERROR_CHECK(
-        udp_logging_init(g_persistent.logDestination, g_persistent.logPort, g_persistent.logwrite2Stdout));
+      ESP_ERROR_CHECK(udp_logging_init(g_persistent.logUrl, g_persistent.logPort, g_persistent.logwrite2Stdout));
       break;
 
     case ALPHA_LOG_TCP:
-      ESP_ERROR_CHECK(
-        tcp_logging_init(g_persistent.logDestination, g_persistent.logPort, g_persistent.logwrite2Stdout));
+      ESP_ERROR_CHECK(tcp_logging_init(g_persistent.logUrl, g_persistent.logPort, g_persistent.logwrite2Stdout));
+      break;
+
+    case ALPHA_LOG_HTTP:
+      ESP_ERROR_CHECK(http_logging_init(g_persistent.logUrl, g_persistent.logwrite2Stdout));
       break;
 
     case ALPHA_LOG_MQTT:
-      ESP_ERROR_CHECK(
-        mqtt_logging_init(g_persistent.logDestination, g_persistent.logMqttTopic, g_persistent.logwrite2Stdout));
+      ESP_ERROR_CHECK(mqtt_logging_init(g_persistent.logUrl, g_persistent.logMqttTopic, g_persistent.logwrite2Stdout));
       break;
 
     case ALPHA_LOG_VSCP:
@@ -1553,12 +1606,6 @@ app_main(void)
 #else
   xTaskCreate(&tcpsrv_task, "vscp_tcpsrv_task", 4096, (void *) AF_INET, 5, NULL);
 #endif
-
-  // Start web server
-  httpd_handle_t server = start_webserver();
-
-  // Start MQTT
-  mqtt_start();
 
   ESP_LOGI(TAG, "Going to work now!");
 
