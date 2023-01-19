@@ -132,7 +132,7 @@ transport_t g_tr_tcpsrv[MAX_TCP_CONNECTIONS] = {}; // VSCP tcp/ip link server
 transport_t g_tr_mqtt                        = {}; // MQTT
 
 // Logging
-int16_t g_write2Stdout = 0;     // Enable write to standard out
+// int16_t g_write2Stdout = 0;     // Enable write to standard out
 
 static void
 vscp_heartbeat_task(void *pvParameter);
@@ -203,22 +203,27 @@ const blink_step_t test_blink[] = {
 node_persistent_config_t g_persistent = {
 
   // General
-  .nodeName   = "Alpha Node", 
-  .pmk = { 0 },
-  .nodeGuid = { 0 },      // GUID for unit
+  .nodeName   = "Alpha Node",
+  .pmk        = { 0 },
+  .nodeGuid   = { 0 }, // GUID for unit
   .startDelay = 2,
   .bootCnt    = 0,
 
-  // Logging
-  .logLevel = ESP_LOG_ERROR,
-  .logOutput = ALPHA_LOG_STD,
-  .logRetries = 5,
-  .logDestination = { 0 },
-  .logPort = 6789,
-  .logMqttTopic = "%guid/log",
+// Logging
+#if CONFIG_WRITE_TO_STDOUT
+  .logwrite2Stdout = 1,
+#else
+  .logwrite2Stdout = 0,
+#endif
+  .logLevel       = ESP_LOG_INFO,
+  .logOutput      = ALPHA_LOG_UDP,
+  .logRetries     = 5,
+  .logDestination = "255.255.255.255",
+  .logPort        = 6789,
+  .logMqttTopic   = "%guid/log",
 
   // Web server
-  .webPort = 80,
+  .webPort     = 80,
   .webUsername = "vscp",
   .webPassword = "secret"
 };
@@ -283,8 +288,7 @@ readPersistentConfigs(void)
 
     default:
       ESP_LOGE(TAG, "Error (%s) reading boot counter!", esp_err_to_name(rv));
-      break;      
-  
+      break;
   }
 
   // Update and write back boot counter
@@ -335,13 +339,13 @@ readPersistentConfigs(void)
   }
 
   // Logging
-  esp_log_level_set("*", ESP_LOG_INFO); 
+  esp_log_level_set("*", ESP_LOG_INFO);
   rv = nvs_get_u8(g_nvsHandle, "log-level", &g_persistent.logLevel);
   switch (rv) {
 
     case ESP_OK:
       ESP_LOGI(TAG, "Log level = %d", g_persistent.logLevel);
-      //esp_log_level_set("*", g_persistent.logLevel);   // TODO!!!! ENABLE in production
+      // esp_log_level_set("*", g_persistent.logLevel);   // TODO!!!! ENABLE in production
       break;
 
     case ESP_ERR_NVS_NOT_FOUND:
@@ -357,7 +361,7 @@ readPersistentConfigs(void)
   }
 
   // VSCP Link Username
-  rv            = nvs_get_str(g_nvsHandle, "vscp_username", buf, &length);
+  rv = nvs_get_str(g_nvsHandle, "vscp_username", buf, &length);
   if (rv != ESP_OK) {
     ESP_LOGE(TAG, "Failed to read 'VSCP Username' will be set to default. ret=%d", rv);
     rv = nvs_set_str(g_nvsHandle, "vscp_username", DEFAULT_TCPIP_USER);
@@ -365,7 +369,7 @@ readPersistentConfigs(void)
       ESP_LOGE(TAG, "Failed to save VSCP username");
     }
   }
-  //ESP_LOGI(TAG, "VSCP Username: %s", buf);
+  // ESP_LOGI(TAG, "VSCP Username: %s", buf);
 
   // VSCP Link password
   length = sizeof(buf);
@@ -377,21 +381,21 @@ readPersistentConfigs(void)
       ESP_LOGE(TAG, "Failed to save VSCP password");
     }
   }
-  //ESP_LOGI(TAG, "VSCP Password: %s", buf);
+  // ESP_LOGI(TAG, "VSCP Password: %s", buf);
 
   // pmk (Primary key)
   length = 32;
   rv     = nvs_get_blob(g_nvsHandle, "pmk", g_persistent.pmk, &length);
-  if (rv != ESP_OK) {    
+  if (rv != ESP_OK) {
     const char key[] = VSCP_DEFAULT_KEY32;
-    const char *pos = key;
-    for (int i=0; i < 32; i++) {
-        sscanf(pos, "%2hhx", &g_persistent.pmk[i]);
-        pos += 2;
+    const char *pos  = key;
+    for (int i = 0; i < 32; i++) {
+      sscanf(pos, "%2hhx", &g_persistent.pmk[i]);
+      pos += 2;
     }
     rv = nvs_set_blob(g_nvsHandle, "pmk", g_persistent.pmk, 32);
     if (rv != ESP_OK) {
-      ESP_LOGE(TAG,"Failed to write node pmk to nvs. rv=%d", rv);
+      ESP_LOGE(TAG, "Failed to write node pmk to nvs. rv=%d", rv);
     }
   }
 
@@ -408,35 +412,35 @@ readPersistentConfigs(void)
     g_persistent.nodeGuid[5] = 0xff;
     g_persistent.nodeGuid[6] = 0xff;
     g_persistent.nodeGuid[7] = 0xfe;
-    rv = esp_efuse_mac_get_default(g_persistent.nodeGuid + 8);    
+    rv                       = esp_efuse_mac_get_default(g_persistent.nodeGuid + 8);
     if (rv != ESP_OK) {
-      ESP_LOGE(TAG,"esp_efuse_mac_get_default failed to get GUID. rv=%d", rv);
+      ESP_LOGE(TAG, "esp_efuse_mac_get_default failed to get GUID. rv=%d", rv);
     }
 
     rv = nvs_set_blob(g_nvsHandle, "guid", g_persistent.nodeGuid, 16);
     if (rv != ESP_OK) {
-      ESP_LOGE(TAG,"Failed to write node GUID to nvs. rv=%d", rv);
+      ESP_LOGE(TAG, "Failed to write node GUID to nvs. rv=%d", rv);
     }
   }
   ESP_LOGI(TAG,
-             "GUID for node: %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
-             g_persistent.nodeGuid[0],
-             g_persistent.nodeGuid[1],
-             g_persistent.nodeGuid[2],
-             g_persistent.nodeGuid[3],
-             g_persistent.nodeGuid[4],
-             g_persistent.nodeGuid[5],
-             g_persistent.nodeGuid[6],
-             g_persistent.nodeGuid[7],
-             g_persistent.nodeGuid[8],
-             g_persistent.nodeGuid[9],
-             g_persistent.nodeGuid[10],
-             g_persistent.nodeGuid[11],
-             g_persistent.nodeGuid[12],
-             g_persistent.nodeGuid[13],
-             g_persistent.nodeGuid[14],
-             g_persistent.nodeGuid[15]);
-  
+           "GUID for node: %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
+           g_persistent.nodeGuid[0],
+           g_persistent.nodeGuid[1],
+           g_persistent.nodeGuid[2],
+           g_persistent.nodeGuid[3],
+           g_persistent.nodeGuid[4],
+           g_persistent.nodeGuid[5],
+           g_persistent.nodeGuid[6],
+           g_persistent.nodeGuid[7],
+           g_persistent.nodeGuid[8],
+           g_persistent.nodeGuid[9],
+           g_persistent.nodeGuid[10],
+           g_persistent.nodeGuid[11],
+           g_persistent.nodeGuid[12],
+           g_persistent.nodeGuid[13],
+           g_persistent.nodeGuid[14],
+           g_persistent.nodeGuid[15]);
+
   rv = nvs_commit(g_nvsHandle);
   if (rv != ESP_OK) {
     ESP_LOGI(TAG, "Failed to commit updates to nvs\n");
@@ -1300,9 +1304,9 @@ app_main(void)
   }
   g_tr_mqtt.msg_queue = xQueueCreate(10, DROPLET_MAX_FRAME); // MQTT empties
 
-  // **************************************************************************
+  // ----------------------------------------------------------------------------
   //                        NVS - Persistent storage
-  // **************************************************************************
+  // ----------------------------------------------------------------------------
 
   // Init persistent storage
   ESP_LOGI(TAG, "Persistent storage ... ");
@@ -1312,6 +1316,7 @@ app_main(void)
     ESP_LOGE(TAG, "Error (%s) opening NVS handle!\n", esp_err_to_name(rv));
   }
   else {
+    // Read (or set to defaults) persistent values
     readPersistentConfigs();
   }
 
@@ -1358,6 +1363,10 @@ app_main(void)
     ESP_LOGE(TAG, "Failed to start indicator light");
   }
 
+  // ----------------------------------------------------------------------------
+  //                           WiFi Provisioning
+  // ----------------------------------------------------------------------------
+
   if (!wifi_provisioning()) {
 
     ESP_LOGI(TAG, "Already provisioned, starting Wi-Fi");
@@ -1391,7 +1400,7 @@ app_main(void)
     uint8_t cnt = 20; // 20 seconds until reboot due to no IP address
     while (!xEventGroupWaitBits(g_wifi_event_group, WIFI_CONNECTED_EVENT, false, true, 1000 / portTICK_PERIOD_MS)) {
       if (--cnt == 0) {
-        esp_wifi_disconnect();        
+        esp_wifi_disconnect();
         esp_restart();
         vTaskDelay(2000 / portTICK_PERIOD_MS);
       }
@@ -1404,25 +1413,43 @@ app_main(void)
     ESP_LOGE(TAG, "Failed to start indicator light");
   }
 
+  // ----------------------------------------------------------------------------
+  //                                  Logging
+  // ----------------------------------------------------------------------------
 
-// ----------------------------------------------------------------------------
+  switch (g_persistent.logOutput) {
 
-#if CONFIG_WRITE_TO_STDOUT
-  g_write2Stdout  = 1;
-#endif
+    case ALPHA_LOG_NONE:
+      break;
 
-#if CONFIG_ENABLE_UDP_LOG
-	ESP_ERROR_CHECK(udp_logging_init( CONFIG_LOG_UDP_SERVER_IP, CONFIG_LOG_UDP_SERVER_PORT, g_write2Stdout ));
-#endif // CONFIG_ENABLE_UDP_LOG
+    case ALPHA_LOG_UDP:
+      ESP_ERROR_CHECK(
+        udp_logging_init(g_persistent.logDestination, g_persistent.logPort, g_persistent.logwrite2Stdout));
+      break;
 
-#if CONFIG_ENABLE_TCP_LOG
-	ESP_ERROR_CHECK(tcp_logging_init( CONFIG_LOG_TCP_SERVER_IP, CONFIG_LOG_TCP_SERVER_PORT, g_write2Stdout ));
-#endif // CONFIG_ENABLE_TCP_LOG
+    case ALPHA_LOG_TCP:
+      ESP_ERROR_CHECK(
+        tcp_logging_init(g_persistent.logDestination, g_persistent.logPort, g_persistent.logwrite2Stdout));
+      break;
 
-#if CONFIG_ENABLE_MQTT_LOG
-	ESP_ERROR_CHECK(mqtt_logging_init( CONFIG_LOG_MQTT_SERVER_URL, CONFIG_LOG_MQTT_PUB_TOPIC, g_write2Stdout ));
-#endif // CONFIG_ENABLE_MQTT_LOG
+    case ALPHA_LOG_MQTT:
+      ESP_ERROR_CHECK(
+        mqtt_logging_init(g_persistent.logDestination, g_persistent.logMqttTopic, g_persistent.logwrite2Stdout));
+      break;
 
+    case ALPHA_LOG_VSCP:
+      // ESP_ERROR_CHECK(mqtt_logging_init( CONFIG_LOG_MQTT_SERVER_URL, CONFIG_LOG_MQTT_PUB_TOPIC,
+      // g_persistent.logwrite2Stdout ));
+      break;
+
+    case ALPHA_LOG_STD:
+    default:
+      break;
+  }
+
+  // ----------------------------------------------------------------------------
+  //                                   Spiffs
+  // ----------------------------------------------------------------------------
 
   // Initialize Spiffs for web pages
   ESP_LOGI(TAG, "Initializing SPIFFS");
@@ -1490,6 +1517,10 @@ app_main(void)
   // Start LED controlling tast
   // xTaskCreate(&led_task, "led_task", 1024, NULL, 5, NULL);
 
+  // ----------------------------------------------------------------------------
+  //                              Droplet
+  // ----------------------------------------------------------------------------
+
   // Initialize droplet
   droplet_config_t droplet_config = { .channel                = 1,
                                       .ttl                    = 32,
@@ -1497,11 +1528,10 @@ app_main(void)
                                       .bForwardSwitchChannel  = false,
                                       .sizeQueue              = 32,
                                       .bFilterAdjacentChannel = false,
-                                      .filterWeakSignal       = false 
-                                    };
+                                      .filterWeakSignal       = false };
 
   // Set primary key
-  memcpy(droplet_config, g_persistent.pmk, 32 );
+  memcpy(droplet_config.pmk, g_persistent.pmk, 32);
 
   if (ESP_OK != droplet_init(&droplet_config)) {
     ESP_LOGE(TAG, "Failed to initialize espnow");

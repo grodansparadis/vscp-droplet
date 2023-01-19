@@ -14,6 +14,10 @@ idf_component_register(SRCS "main.c"
                             "callbacks-link.c"
                             "callbacks-vscp-protocol.c"
                             "mqtt.c"
+                            "net_logging.c"
+                            "udp_client.c"
+                            "tcp_client.c"
+                            "mqtt_pub.c"
                             
 
                     INCLUDE_DIRS "." 

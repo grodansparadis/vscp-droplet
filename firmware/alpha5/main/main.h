@@ -96,7 +96,7 @@ typedef struct {
 #define DEFAULT_TCPIP_PASSWORD "secret"
 #define DEFAULT_TCPIP_VER      4 // Ipv6 = 6 or Ipv4 = 4
 #define TCPSRV_WELCOME_MSG                                                                                             \
-  "Welcome to the Droplet Alpha node\r\n"                                                                       \
+  "Welcome to the Droplet Alpha node\r\n"                                                                              \
   "Copyright (C) 2000-2023 Åke Hedman, Grodans Paradis AB\r\n"                                                        \
   "https://www.grodansparadis.com\r\n"                                                                                 \
   "+OK\r\n"
@@ -121,48 +121,49 @@ typedef struct {
 // ----------------------------------------------------------------------------
 
 typedef enum {
-    ALPHA_LOG_NONE,       /*!< No log output */
-    ALPHA_LOG_STD,        /*!< Standard output */
-    ALPHA_LOG_UDP,        /*!< UDP */
-    ALPHA_LOG_VSCP,       /*!< VSCP */
-    ALPHA_LOG_MQTT,       /*!< MQTT */
-    ALPHA_LOG_HTML        /*!< HTML */
+  ALPHA_LOG_NONE, /*!< No log output */
+  ALPHA_LOG_STD,  /*!< Standard output */
+  ALPHA_LOG_UDP,  /*!< UDP */
+  ALPHA_LOG_TCP,  /*!< TCP */ 
+  ALPHA_LOG_MQTT, /*!< MQTT */
+  ALPHA_LOG_VSCP  /*!< VSCP */
 } alpha_log_output_t;
 
 typedef struct {
 
   // Module
-  char nodeName[32];        // User name for node  
-  uint8_t pmk[32];          // Primary key (16 (EAS128)/24(AES192)/32(AES256))
-  uint8_t nodeGuid[16];     // GUID for node (default: Constructed from MAC address)
-  uint8_t startDelay;       // Delay before wifi is enabled (to charge cap)
-  uint32_t bootCnt;         // Number of restarts (not editable)
+  char nodeName[32];    // User name for node
+  uint8_t pmk[32];      // Primary key (16 (EAS128)/24(AES192)/32(AES256))
+  uint8_t nodeGuid[16]; // GUID for node (default: Constructed from MAC address)
+  uint8_t startDelay;   // Delay before wifi is enabled (to charge cap)
+  uint32_t bootCnt;     // Number of restarts (not editable)
 
   // Logging
-  esp_log_level_t logLevel;  // 'ERROR' is default
-  uint8_t logOutput;         // 0=stdout, 1=UDP, 2=VSCP, 3=MQTT
-  uint8_t logRetries;        // Number of log send retries
-  char logDestination[32];   // For UDP/TCP/HTML
-  short logPort;             // Port for UDP
-  char logMqttTopic[64];     //  MQTT topic
-  
+  uint8_t logwrite2Stdout;  // Enable write Logging to STDOUT
+  esp_log_level_t logLevel; // 'ERROR' is default
+  uint8_t logOutput;        // 0=STDOUT, 1=UDP, 3=TCP, 3=MQTT, 4=VSCP
+  uint8_t logRetries;       // Number of log log retries
+  char logDestination[32];  // For UDP/TCP/HTML
+  short logPort;            // Port for UDP
+  char logMqttTopic[64];    //  MQTT topic
+
   // VSCP Link
   char vscplinkUserName[32];
   char vscplinkPassword[32];
   short vscplink_port;
-  
-  // Droplet  
-  uint8_t droppletChannel;            // Channel to use (zero is current)
-  uint8_t dropletTtl;                 // Default ttl
-  bool dropletForwardEnable;          // Forward when packets are received
-  uint8_t dropletEncryption;          // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256
-  bool dropletFilterAdjacentChannel;  // Don't receive if from other channel
-  int dropletFilterWeakSignal;        // Filter onm RSSI (zero is no rssi filtering)
-  
+
+  // Droplet
+  uint8_t droppletChannel;           // Channel to use (zero is current)
+  uint8_t dropletTtl;                // Default ttl
+  bool dropletForwardEnable;         // Forward when packets are received
+  uint8_t dropletEncryption;         // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256
+  bool dropletFilterAdjacentChannel; // Don't receive if from other channel
+  int dropletFilterWeakSignal;       // Filter onm RSSI (zero is no rssi filtering)
+
   // Web server
-  uint16_t webPort;                   // Port web server listens on
-  char webUsername[32];               // Basic Auth username
-  char webPassword[32];               // Basic Auth password
+  uint16_t webPort;     // Port web server listens on
+  char webUsername[32]; // Basic Auth username
+  char webPassword[32]; // Basic Auth password
 
   // MQTT  (mqtt[s]://[username][:password]@host.domain[:port])
   char mqttHost[32];
@@ -175,9 +176,7 @@ typedef struct {
 
 } node_persistent_config_t;
 
-
 // ----------------------------------------------------------------------------
-
 
 /*!
   ESP-NOW
