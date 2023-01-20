@@ -221,7 +221,23 @@ node_persistent_config_t g_persistent = {
   // Web server
   .webPort     = 80,
   .webUsername = "vscp",
-  .webPassword = "secret"
+  .webPassword = "secret",
+
+  // VSCP tcp/ip Link
+  .vscplinkUrl = { 0 },
+  .vscplinkPort = VSCP_DEFAULT_TCP_PORT,
+  .vscplinkUsername = "vscp",
+  .vscplinkPassword = "secret",
+  .vscpLinkKey = VSCP_DEFAULT_KEY32,
+
+  // MQTT
+  .mqttUrl = { 0 },
+  .mqttPort = 1883,
+  .mqttClientid = "123",
+  .mqttUsername = "vscp",
+  .mqttPassword = "secret",
+  .mqttSub = "vscp/%guid/sub/#",
+  .mqttPub = "vscp/%guid/",
 };
 
 //----------------------------------------------------------
@@ -385,9 +401,9 @@ readPersistentConfigs(void)
   }
 
   // logPort
-  rv = nvs_get_u8(g_nvsHandle, "log_port", &g_persistent.logPort);
+  rv = nvs_get_u16(g_nvsHandle, "log_port", &g_persistent.logPort);
   if (ESP_OK != rv) {
-    rv = nvs_set_u8(g_nvsHandle, "log_port", g_persistent.logPort);
+    rv = nvs_set_u16(g_nvsHandle, "log_port", g_persistent.logPort);
     if (rv != ESP_OK) {
       ESP_LOGE(TAG, "Failed to update log_port");
     }
@@ -406,20 +422,51 @@ readPersistentConfigs(void)
 
   // VSCP Link ----------------------------------------------------------------
 
+  // VSCP Link host
+  length = sizeof(g_persistent.vscplinkUrl);
+  rv = nvs_get_str(g_nvsHandle, "vscp_url", g_persistent.vscplinkUrl, &length);
+  if (rv != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to read 'VSCP link host' will be set to default. ret=%d", rv);
+    rv = nvs_set_str(g_nvsHandle, "vscp_url", DEFAULT_TCPIP_USER);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to save VSCP link host");
+    }
+  }
+
+  // VSCP link port
+  rv = nvs_get_u16(g_nvsHandle, "vscp_port", &g_persistent.vscplinkPort);
+  if (ESP_OK != rv) {
+    rv = nvs_set_u16(g_nvsHandle, "vscp_port", g_persistent.vscplinkPort);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to update VSCP link port");
+    }
+  }
+
+  // VSCP Link key
+  length = sizeof(g_persistent.vscpLinkKey);
+  rv = nvs_get_blob(g_nvsHandle, "vscp_key", (const char *)g_persistent.vscpLinkKey, &length);
+  if (rv != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to read 'VSCP link_key' will be set to default. ret=%d", rv);
+    rv = nvs_set_blob(g_nvsHandle, "vscp_key", g_persistent.vscpLinkKey, sizeof(g_persistent.vscpLinkKey));
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to save VSCL link key");
+    }
+  }
+
   // VSCP Link Username
-  rv = nvs_get_str(g_nvsHandle, "vscp_username", buf, &length);
+  length = sizeof(g_persistent.vscplinkUsername);
+  rv = nvs_get_str(g_nvsHandle, "vscp_user", g_persistent.vscplinkUsername, &length);
   if (rv != ESP_OK) {
     ESP_LOGE(TAG, "Failed to read 'VSCP Username' will be set to default. ret=%d", rv);
-    rv = nvs_set_str(g_nvsHandle, "vscp_username", DEFAULT_TCPIP_USER);
+    rv = nvs_set_str(g_nvsHandle, "vscp_user", DEFAULT_TCPIP_USER);
     if (rv != ESP_OK) {
       ESP_LOGE(TAG, "Failed to save VSCP username");
     }
   }
-  // ESP_LOGI(TAG, "VSCP Username: %s", buf);
 
   // VSCP Link password
-  length = sizeof(buf);
-  rv     = nvs_get_str(g_nvsHandle, "vscp_password", buf, &length);
+  length = sizeof(g_persistent.vscplinkPassword);
+  rv     = nvs_get_str(g_nvsHandle, "vscp_password", g_persistent.vscplinkPassword, &length);
   if (rv != ESP_OK) {
     ESP_LOGE(TAG, "Failed to read 'VSCP password' will be set to default. ret=%d", rv);
     nvs_set_str(g_nvsHandle, "vscp_password", DEFAULT_TCPIP_PASSWORD);
@@ -486,6 +533,83 @@ readPersistentConfigs(void)
            g_persistent.nodeGuid[13],
            g_persistent.nodeGuid[14],
            g_persistent.nodeGuid[15]);
+
+  // MQTT ----------------------------------------------------------------
+
+  // MQTT host
+  length = sizeof(g_persistent.mqttUrl);
+  rv = nvs_get_str(g_nvsHandle, "mqtt_url", g_persistent.mqttUrl, &length);
+  if (rv != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to read 'MQTT host' will be set to default. ret=%d", rv);
+    rv = nvs_set_str(g_nvsHandle, "mqtt_url", g_persistent.mqttUrl);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to save MQTT host");
+    }
+  }
+
+  // MQTT port
+  rv = nvs_get_u16(g_nvsHandle, "mqtt_port", &g_persistent.mqttPort);
+  if (ESP_OK != rv) {
+    rv = nvs_set_u16(g_nvsHandle, "mqtt_port", g_persistent.mqttPort);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to update MQTT port");
+    }
+  }
+
+  // MQTT client
+  length = sizeof(g_persistent.mqttClientid);
+  rv = nvs_get_str(g_nvsHandle, "mqtt_cid", g_persistent.mqttClientid, &length);
+  if (rv != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to read 'MQTT clientid' will be set to default. ret=%d", rv);
+    rv = nvs_set_str(g_nvsHandle, "mqtt_cid", g_persistent.mqttClientid);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to save MQTT clientid");
+    }
+  }
+
+  // MQTT Link Username
+  length = sizeof(g_persistent.mqttUsername);
+  rv = nvs_get_str(g_nvsHandle, "mqtt_user", g_persistent.mqttUsername, &length);
+  if (rv != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to read 'MQTT user' will be set to default. ret=%d", rv);
+    rv = nvs_set_str(g_nvsHandle, "mqtt_user", DEFAULT_TCPIP_USER);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to save MQTT username");
+    }
+  }
+
+  // MQTT password
+  length = sizeof(g_persistent.mqttPassword);
+  rv     = nvs_get_str(g_nvsHandle, "mqtt_password", g_persistent.mqttPassword, &length);
+  if (rv != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to read 'MQTT password' will be set to default. ret=%d", rv);
+    nvs_set_str(g_nvsHandle, "mqtt_password", DEFAULT_TCPIP_PASSWORD);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to save MQTT password");
+    }
+  }
+
+  // MQTT subscribe
+  length = sizeof(g_persistent.mqttSub);
+  rv = nvs_get_str(g_nvsHandle, "mqtt_sub", g_persistent.mqttSub, &length);
+  if (rv != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to read 'MQTT sub' will be set to default. ret=%d", rv);
+    rv = nvs_set_str(g_nvsHandle, "mqtt_sub", g_persistent.mqttSub);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to save MQTT sub");
+    }
+  }
+
+  // MQTT publish
+  length = sizeof(g_persistent.mqttPub);
+  rv = nvs_get_str(g_nvsHandle, "mqtt_pub", g_persistent.mqttPub, &length);
+  if (rv != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to read 'MQTT pub' will be set to default. ret=%d", rv);
+    rv = nvs_set_str(g_nvsHandle, "mqtt_pub", g_persistent.mqttPub);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to save MQTT pub");
+    }
+  }
 
   rv = nvs_commit(g_nvsHandle);
   if (rv != ESP_OK) {

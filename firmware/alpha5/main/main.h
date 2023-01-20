@@ -124,8 +124,8 @@ typedef enum {
   ALPHA_LOG_NONE, /*!< No log output */
   ALPHA_LOG_STD,  /*!< Standard output */
   ALPHA_LOG_UDP,  /*!< UDP */
-  ALPHA_LOG_TCP,  /*!< TCP */ 
-  ALPHA_LOG_HTTP, /*!< HTTP */ 
+  ALPHA_LOG_TCP,  /*!< TCP */
+  ALPHA_LOG_HTTP, /*!< HTTP */
   ALPHA_LOG_MQTT, /*!< MQTT */
   ALPHA_LOG_VSCP  /*!< VSCP */
 } alpha_log_output_t;
@@ -145,13 +145,15 @@ typedef struct {
   uint8_t logType;          // STDOUT / UDP / TCP / HTTP / MQTT /VSCP
   uint8_t logRetries;       // Number of log log retries
   char logUrl[32];          // For UDP/TCP/HTML
-  short logPort;            // Port for UDP
+  uint16_t logPort;         // Port for UDP
   char logMqttTopic[64];    //  MQTT topic
 
   // VSCP Link
-  char vscplinkUserName[32];
-  char vscplinkPassword[32];
-  short vscplink_port;
+  char vscplinkUrl[32];      // URL VSCP tcp/ip Link host (set to blank yto disable)
+  uint16_t vscplinkPort;     // Port on VSCP tcp/ip Link host
+  char vscplinkUsername[32]; // Username for VSCP tcp/ip Link host
+  char vscplinkPassword[32]; // Password for VSCP tcp/ip Link host
+  uint8_t vscpLinkKey[32];   // Security key (16 (EAS128)/24(AES192)/32(AES256))
 
   // Droplet
   uint8_t droppletChannel;           // Channel to use (zero is current)
@@ -167,7 +169,7 @@ typedef struct {
   char webPassword[32]; // Basic Auth password
 
   // MQTT  (mqtt[s]://[username][:password]@host.domain[:port])
-  char mqttHost[32];
+  char mqttUrl[32];
   uint16_t mqttPort;
   char mqttClientid[32];
   char mqttUsername[32];
