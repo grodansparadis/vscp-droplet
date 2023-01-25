@@ -140,13 +140,13 @@ typedef struct {
   uint32_t bootCnt;     // Number of restarts (not editable)
 
   // Logging
-  uint8_t logwrite2Stdout;  // Enable write Logging to STDOUT
-  esp_log_level_t logLevel; // 'ERROR' is default
-  uint8_t logType;          // STDOUT / UDP / TCP / HTTP / MQTT /VSCP
-  uint8_t logRetries;       // Number of log log retries
-  char logUrl[32];          // For UDP/TCP/HTML
-  uint16_t logPort;         // Port for UDP
-  char logMqttTopic[64];    //  MQTT topic
+  uint8_t logwrite2Stdout; // Enable write Logging to STDOUT
+  uint8_t logLevel;        // 'ERROR' is default
+  uint8_t logType;         // STDOUT / UDP / TCP / HTTP / MQTT /VSCP
+  uint8_t logRetries;      // Number of log log retries
+  char logUrl[32];         // For UDP/TCP/HTML
+  uint16_t logPort;        // Port for UDP
+  char logMqttTopic[64];   //  MQTT topic
 
   // VSCP Link
   char vscplinkUrl[32];      // URL VSCP tcp/ip Link host (set to blank yto disable)
@@ -156,12 +156,13 @@ typedef struct {
   uint8_t vscpLinkKey[32];   // Security key (16 (EAS128)/24(AES192)/32(AES256))
 
   // Droplet
+  bool dropletLongRange;             // Enable long range mode
   uint8_t droppletChannel;           // Channel to use (zero is current)
   uint8_t dropletTtl;                // Default ttl
   bool dropletForwardEnable;         // Forward when packets are received
   uint8_t dropletEncryption;         // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256
   bool dropletFilterAdjacentChannel; // Don't receive if from other channel
-  int dropletFilterWeakSignal;       // Filter onm RSSI (zero is no rssi filtering)
+  int8_t dropletFilterWeakSignal;       // Filter on RSSI (zero is no rssi filtering)
 
   // Web server
   uint16_t webPort;     // Port web server listens on

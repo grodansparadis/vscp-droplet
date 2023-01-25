@@ -51,6 +51,7 @@
 #include <esp_vfs.h>
 #include <esp_spiffs.h>
 #include <esp_http_server.h>
+#include <wifi_provisioning/manager.h>
 
 #include <vscp.h>
 #include <vscp-firmware-helper.h>
@@ -60,6 +61,14 @@
 #include "websrv.h"
 #include "main.h"
 
+#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_BLE
+#include <wifi_provisioning/scheme_ble.h>
+#endif /* PROV_EXAMPLE_TRANSPORT_BLE */
+
+#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
+#include <wifi_provisioning/scheme_softap.h>
+#endif /* PROV_EXAMPLE_TRANSPORT_SOFTAP */
+
 // #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 // #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 
@@ -67,7 +76,7 @@
 extern nvs_handle_t g_nvsHandle;
 extern node_persistent_config_t g_persistent;
 extern esp_netif_t *g_netif;
-
+extern vprintf_like_t g_stdLogFunc;
 #define TAG __func__
 
 // Max length a file path can have on storage
@@ -330,15 +339,16 @@ info_get_handler(httpd_req_t *req)
   esp_chip_info_t chip_info;
   esp_chip_info(&chip_info);
 
+  // printf("Firmware version: %d\n", DROPLET_VERSION);
+  const esp_app_desc_t *appDescr = esp_app_get_description();
+
   sprintf(buf, WEBPAGE_START_TEMPLATE, g_persistent.nodeName, "Technical Info");
-  // sprintf(buf,WEBPAGE_START_TEMPLATE);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  sprintf(buf, "<table>");
+  sprintf(buf, "<table style='width:100%%;margin-left: auto; margin-right: auto;'>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  // * * * system * * *
-  // sprintf(buf, "<tr><td>System</td><td></td></tr>");
+  // * * * system * * *);
   sprintf(buf, "<tr><td class='infoheader'>System</td><td></td></tr>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
@@ -507,13 +517,18 @@ info_get_handler(httpd_req_t *req)
   sprintf(buf, "<tr><td class=\"name\">Last reset reson:</td><td class=\"prop\">%s</td></tr>", temp);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  // printf("Number of reboots: %lu\n",g_boot_counter);
   sprintf(buf, "<tr><td class=\"name\">Number of reboots:</td><td class=\"prop\">%lu</td></tr>", g_persistent.bootCnt);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  vscp_fwhlp_writeGuidToString(temp, g_persistent.nodeGuid);
-  sprintf(buf, "<tr><td class=\"name\">GUID:</td><td class=\"prop\">%s</td></tr>", temp);
-  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  char *pre = malloc(32);
+  if (NULL != pre) {
+    vscp_fwhlp_writeGuidToString(temp, g_persistent.nodeGuid);
+    memset(pre, 0, 32);
+    strncpy(pre, temp, 24);
+    sprintf(buf, "<tr><td class=\"name\">GUID:</td><td class=\"prop\">%s<br>%s</td></tr>", pre, temp + 24);
+    httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+    free(pre);
+  }
 
   // -------------------------------------------------------------------------
 
@@ -530,9 +545,6 @@ info_get_handler(httpd_req_t *req)
           ((time / 1000000) / 60),
           (time / 1000000));
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
-
-  // printf("Firmware version: %d\n", DROPLET_VERSION);
-  const esp_app_desc_t *appDescr = esp_app_get_description();
 
   if (NULL != appDescr) {
     // sprintf(temp,"%s",appDescr->project_name);
@@ -1081,7 +1093,7 @@ config_get_handler(httpd_req_t *req)
   sprintf(buf,
           "<p><form id=but3 class=\"button\" action='cfgvscplink' method='get'><button>VSCP Link</button></form></p>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
-  
+
   sprintf(buf, "<p><form id=but3 class=\"button\" action='cfgweb' method='get'><button>Web server</button></form></p>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
@@ -1238,7 +1250,7 @@ do_config_module_get_handler(httpd_req_t *req)
           free(buf);
           return ESP_ERR_ESPNOW_NO_MEM;
         }
-        ESP_LOGI(TAG, "Found name query parameter => name=%s", pdecoded);
+        ESP_LOGI(TAG, "Found query parameter => name=%s", pdecoded);
         strncpy(g_persistent.nodeName, pdecoded, 31);
         free(pdecoded);
         // Write changed value to persistent storage
@@ -1253,7 +1265,7 @@ do_config_module_get_handler(httpd_req_t *req)
 
       // pmk
       if (ESP_OK == (rv = httpd_query_key_value(buf, "pmk", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => pmk=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => pmk=%s", param);
         memset(g_persistent.pmk, 0, 32);
         vscp_fwhlp_hex2bin(g_persistent.pmk, 32, param);
 
@@ -1269,7 +1281,7 @@ do_config_module_get_handler(httpd_req_t *req)
 
       // strtdly
       if (ESP_OK == (rv = httpd_query_key_value(buf, "strtdly", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => strtdly=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => strtdly=%s", param);
         g_persistent.startDelay = atoi(param);
         // Write changed value to persistent storage
         rv = nvs_set_u8(g_nvsHandle, "start_delay", g_persistent.startDelay);
@@ -1283,7 +1295,7 @@ do_config_module_get_handler(httpd_req_t *req)
 
       // GUID
       if (ESP_OK == (rv = httpd_query_key_value(buf, "guid", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => guid=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => guid=%s", param);
 
         char *p = urlDecode((const char *) param);
         ESP_LOGI(TAG, "URL Decode => guid=%s", p);
@@ -1317,6 +1329,106 @@ do_config_module_get_handler(httpd_req_t *req)
   httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
 
   return ESP_OK;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// print_auth_mode
+//
+
+static void
+print_auth_mode(httpd_req_t *req, char *buf, int authmode)
+{
+  switch (authmode) {
+    case WIFI_AUTH_OPEN:
+      sprintf(buf, "<b>Authmode</b> WIFI_AUTH_OPEN<br>");
+      break;
+    case WIFI_AUTH_OWE:
+      sprintf(buf, "<b>Authmode</b> WIFI_AUTH_OWE<br>");
+      break;
+    case WIFI_AUTH_WEP:
+      sprintf(buf, "<b>Authmode</b> WIFI_AUTH_WEP<br>");
+      break;
+    case WIFI_AUTH_WPA_PSK:
+      sprintf(buf, "<b>Authmode</b> WIFI_AUTH_WPA_PSK<br>");
+      break;
+    case WIFI_AUTH_WPA2_PSK:
+      sprintf(buf, "<b>Authmode</b> WIFI_AUTH_WPA2_PSK<br>");
+      break;
+    case WIFI_AUTH_WPA_WPA2_PSK:
+      sprintf(buf, "<b>Authmode</b> WIFI_AUTH_WPA_WPA2_PSK<br>");
+      break;
+    case WIFI_AUTH_WPA2_ENTERPRISE:
+      sprintf(buf, "<b>Authmode</b> WIFI_AUTH_WPA2_ENTERPRISE<br>");
+      break;
+    case WIFI_AUTH_WPA3_PSK:
+      sprintf(buf, "<b>Authmode</b> WIFI_AUTH_WPA3_PSK<br>");
+      break;
+    case WIFI_AUTH_WPA2_WPA3_PSK:
+      sprintf(buf, "<b>Authmode</b> WIFI_AUTH_WPA2_WPA3_PSK<br>");
+      break;
+    default:
+      sprintf(buf, "<b>Authmode</b> WIFI_AUTH_UNKNOWN<br>");
+      break;
+  }
+
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// print_cipher_type
+//
+
+static void
+print_cipher_type(httpd_req_t *req, char *buf, int pairwise_cipher, int group_cipher)
+{
+  switch (pairwise_cipher) {
+    case WIFI_CIPHER_TYPE_NONE:
+      sprintf(buf, "<b>Pairwise Cipher</b> WIFI_CIPHER_TYPE_NONE<br>");
+      break;
+    case WIFI_CIPHER_TYPE_WEP40:
+      sprintf(buf, "<b>Pairwise Cipher</b> WIFI_CIPHER_TYPE_WEP40<br>");
+      break;
+    case WIFI_CIPHER_TYPE_WEP104:
+      sprintf(buf, "<b>Pairwise Cipher</b> WIFI_CIPHER_TYPE_WEP104<br>");
+      break;
+    case WIFI_CIPHER_TYPE_TKIP:
+      sprintf(buf, "<b>Pairwise Cipher</b> WIFI_CIPHER_TYPE_TKIP<br>");
+      break;
+    case WIFI_CIPHER_TYPE_CCMP:
+      sprintf(buf, "<b>Pairwise Cipher</b> WIFI_CIPHER_TYPE_CCMP<br>");
+      break;
+    case WIFI_CIPHER_TYPE_TKIP_CCMP:
+      sprintf(buf, "<b>Pairwise Cipher</b> WIFI_CIPHER_TYPE_TKIP_CCMP<br>");
+      break;
+    default:
+      sprintf(buf, "<b>Pairwise Cipher</b> WIFI_CIPHER_TYPE_UNKNOWN<br>");
+      break;
+  }
+
+  switch (group_cipher) {
+    case WIFI_CIPHER_TYPE_NONE:
+      sprintf(buf, "<b>Group Cipher</b> WIFI_CIPHER_TYPE_NONE<br>");
+      break;
+    case WIFI_CIPHER_TYPE_WEP40:
+      sprintf(buf, "<b>Group Cipher</b> WIFI_CIPHER_TYPE_WEP40<br>");
+      break;
+    case WIFI_CIPHER_TYPE_WEP104:
+      sprintf(buf, "<b>Group Cipher</b> WIFI_CIPHER_TYPE_WEP104<br>");
+      break;
+    case WIFI_CIPHER_TYPE_TKIP:
+      sprintf(buf, "<b>Group Cipher</b> WIFI_CIPHER_TYPE_TKIP<br>");
+      break;
+    case WIFI_CIPHER_TYPE_CCMP:
+      sprintf(buf, "<b>Group Cipher</b> WIFI_CIPHER_TYPE_CCMP<br>");
+      break;
+    case WIFI_CIPHER_TYPE_TKIP_CCMP:
+      sprintf(buf, "<b>Group Cipher</b> WIFI_CIPHER_TYPE_TKIP_CCMP<br>");
+      break;
+    default:
+      sprintf(buf, "<b>Group Cipher</b> WIFI_CIPHER_TYPE_UNKNOWN<br>");
+      break;
+  }
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1359,22 +1471,29 @@ config_wifi_get_handler(httpd_req_t *req)
   sprintf(buf, "<div><form id=but3 class=\"button\" action='/docfgwifi' method='get'><fieldset>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  sprintf(buf,
-          "Module name:<input type=\"text\" name=\"node_name\" maxlength=\"32\" size=\"20\" value=\"%s\" >",
-          g_persistent.nodeName);
+  uint16_t number = 5;
+  wifi_ap_record_t ap_info[5];
+  uint16_t ap_count = 0;
+  memset(ap_info, 0, sizeof(ap_info));
+  esp_wifi_scan_start(NULL, true);
+  ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&number, ap_info));
+  ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
+  sprintf(buf, "<b>Total APs scanned</b> = %u<br><br>", ap_count);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
-
-  const char *pmkstr = malloc(65);
-  for (int i = 0; i < 32; i++) {
-    sprintf(pmkstr + 2 * i, "%02X", g_persistent.pmk[i]);
+  for (int i = 0; (i < 5) && (i < ap_count); i++) {
+    sprintf(buf, "<b>SSID</b> = %s<br>", ap_info[i].ssid);
+    httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+    sprintf(buf, "<b>RSSI</b> = %d<br>", ap_info[i].rssi);
+    httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+    print_auth_mode(req, buf, ap_info[i].authmode);
+    if (ap_info[i].authmode != WIFI_AUTH_WEP) {
+      print_cipher_type(req, buf, ap_info[i].pairwise_cipher, ap_info[i].group_cipher);
+    }
+    sprintf(buf, "Channel = %d<br><hr>", ap_info[i].primary);
+    httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
   }
-  sprintf(buf,
-          "Primay key (32 bytes hex):<input type=\"text\" name=\"pmk\" maxlength=\"64\" size=\"20\" value=\"%s\" >",
-          pmkstr);
-  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
-  free(pmkstr);
 
-  sprintf(buf, "<button class=\"bgrn bgrn:hover\">Save</button></fieldset></form></div>");
+  sprintf(buf, "<button class=\"bred bgrn:hover\">Reprovision</button></fieldset></form></div>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
   sprintf(buf, WEBPAGE_END_TEMPLATE, appDescr->version, g_persistent.nodeName);
@@ -1420,7 +1539,7 @@ do_config_wifi_get_handler(httpd_req_t *req)
           free(buf);
           return ESP_ERR_ESPNOW_NO_MEM;
         }
-        ESP_LOGI(TAG, "Found name query parameter => name=%s", pdecoded);
+        ESP_LOGI(TAG, "Found query parameter => name=%s", pdecoded);
         strncpy(g_persistent.nodeName, pdecoded, 31);
         free(pdecoded);
         // Write changed value to persistent storage
@@ -1435,7 +1554,7 @@ do_config_wifi_get_handler(httpd_req_t *req)
 
       // strtdly
       if (ESP_OK == (rv = httpd_query_key_value(buf, "strtdly", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => strtdly=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => strtdly=%s", param);
         g_persistent.startDelay = atoi(param);
         // Write changed value to persistent storage
         rv = nvs_set_u8(g_nvsHandle, "start_delay", g_persistent.startDelay);
@@ -1449,7 +1568,7 @@ do_config_wifi_get_handler(httpd_req_t *req)
 
       // GUID
       if (ESP_OK == (rv = httpd_query_key_value(buf, "guid", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => guid=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => guid=%s", param);
 
         char *p = urlDecode(param);
         ESP_LOGI(TAG, "URL Decode => guid=%s", p);
@@ -1478,7 +1597,7 @@ do_config_wifi_get_handler(httpd_req_t *req)
     free(buf);
   }
   const char *resp_str =
-    "<html><head><meta charset='utf-8'><meta http-equiv=\"refresh\" content=\"1;url=cfgmodule\" "
+    "<html><head><meta charset='utf-8'><meta http-equiv=\"refresh\" content=\"1;url=cfgwifi\" "
     "/><style>" WEBPAGE_STYLE_CSS "</style></head><body><h2 class=\"name\">saving module data...</h2></body></html>";
   httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
 
@@ -1527,22 +1646,63 @@ config_droplet_get_handler(httpd_req_t *req)
   sprintf(buf, "<div><form id=but3 class=\"button\" action='/docfgdroplet' method='get'><fieldset>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  sprintf(buf,
-          "Module name:<input type=\"text\" name=\"node_name\" maxlength=\"32\" size=\"20\" value=\"%s\" >",
-          g_persistent.nodeName);
+  // Long range
+  sprintf(buf, "<input type=\"checkbox\" name=\"lr\" value=\"true\" ");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "%s><label for=\"lr\"> Enable Long Range</label>", g_persistent.dropletLongRange ? "checked" : "");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  const char *pmkstr = malloc(65);
-  for (int i = 0; i < 32; i++) {
-    sprintf(pmkstr + 2 * i, "%02X", g_persistent.pmk[i]);
-  }
-  sprintf(buf,
-          "Primay key (32 bytes hex):<input type=\"text\" name=\"pmk\" maxlength=\"64\" size=\"20\" value=\"%s\" >",
-          pmkstr);
+  // Forward
+  sprintf(buf, "<br><input type=\"checkbox\" name=\"fw\" value=\"true\" ");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
-  free(pmkstr);
+  sprintf(buf,
+          "%s><label for=\"fw\"> Enable Frame Forward</label>",
+          g_persistent.dropletForwardEnable ? "checked" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  sprintf(buf, "<button class=\"bgrn bgrn:hover\">Save</button></fieldset></form></div>");
+  // Filter Adj Channel
+  sprintf(buf, "<br><input type=\"checkbox\" name=\"adjf\" value=\"true\" ");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf,
+          "%s><label for=\"adjf\"> Filter Adj. Channel</label>",
+          g_persistent.dropletFilterAdjacentChannel ? "checked" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf, "<br />Encryption:<select  name=\"enc\" >");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf,
+          "<option value=\"0\" %s>None</option>",
+          (VSCP_ENCRYPTION_NONE == g_persistent.dropletEncryption) ? "selected" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf,
+          "<option value=\"1\" %s>AES-128</option>",
+          (VSCP_ENCRYPTION_AES128 == g_persistent.dropletEncryption) ? "selected" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf,
+          "<option value=\"2\" %s>AES-192</option>",
+          (VSCP_ENCRYPTION_AES192 == g_persistent.dropletEncryption) ? "selected" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf,
+          "<option value=\"3\" %s>AES-256</option>",
+          (VSCP_ENCRYPTION_AES256 == g_persistent.dropletEncryption) ? "selected" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "</select>");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf,
+          "<br>Use channel (0 is current):<input type=\"text\" name=\"channel\" value=\"%d\" >",
+          g_persistent.droppletChannel);
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf, "<br>Time to live (32):<input type=\"text\" name=\"ttl\" value=\"%d\" >", g_persistent.dropletTtl);
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf,
+          "<br>Filter on RSSI (-67):<input type=\"text\" name=\"rssi\" value=\"%d\" >",
+          g_persistent.dropletFilterWeakSignal);
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf, "<button class=\"bgrn bgrn:hover\">Save</button></fieldset></form></div><br>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
   sprintf(buf, WEBPAGE_END_TEMPLATE, appDescr->version, g_persistent.nodeName);
@@ -1580,59 +1740,120 @@ do_config_droplet_get_handler(httpd_req_t *req)
         free(buf);
       }
 
-      // name
-      if (ESP_OK == (rv = httpd_query_key_value(buf, "node_name", param, WEBPAGE_PARAM_SIZE))) {
-        char *pdecoded = urlDecode(param);
-        if (NULL == pdecoded) {
-          free(param);
-          free(buf);
-          return ESP_ERR_ESPNOW_NO_MEM;
-        }
-        ESP_LOGI(TAG, "Found name query parameter => name=%s", pdecoded);
-        strncpy(g_persistent.nodeName, pdecoded, 31);
-        free(pdecoded);
-        // Write changed value to persistent storage
-        rv = nvs_set_str(g_nvsHandle, "node_name", g_persistent.nodeName);
-        if (rv != ESP_OK) {
-          ESP_LOGE(TAG, "Failed to update node name");
+      // Long range
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "lr", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found query parameter => lr=%s", param);
+        if (NULL != strstr(param, "true")) {
+          g_persistent.dropletLongRange = true;
         }
       }
       else {
-        ESP_LOGE(TAG, "Error getting node_name => rv=%d", rv);
+        g_persistent.dropletLongRange = false;
       }
 
-      // strtdly
-      if (ESP_OK == (rv = httpd_query_key_value(buf, "strtdly", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => strtdly=%s", param);
-        g_persistent.startDelay = atoi(param);
+      // Write changed value to persistent storage
+      rv = nvs_set_u8(g_nvsHandle, "drop_lr", g_persistent.dropletLongRange);
+      if (rv != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update droplet long range");
+      }
+
+      // Forward
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "fw", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found query parameter => fw=%s", param);
+        if (NULL != strstr(param, "true")) {
+          g_persistent.dropletForwardEnable = true;
+        }
+        else {
+          g_persistent.dropletForwardEnable = false;
+        }
+      }
+      else {
+        g_persistent.dropletForwardEnable = false;
+      }
+
+      // Write changed value to persistent storage
+      rv = nvs_set_u8(g_nvsHandle, "drop_fw", g_persistent.dropletForwardEnable);
+      if (rv != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update droplet forward");
+      }
+
+      // Filter Adj. Channel
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "adjf", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found query parameter => adjf=%s", param);
+        if (NULL != strstr(param, "true")) {
+          g_persistent.dropletFilterAdjacentChannel = true;
+        }
+        else {
+          g_persistent.dropletFilterAdjacentChannel = false;
+        }
+      }
+      else {
+        g_persistent.dropletFilterAdjacentChannel = false;
+      }
+
+      // channel
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "channel", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found query parameter => channel=%s", param);
+        g_persistent.droppletChannel = atoi(param);
         // Write changed value to persistent storage
-        rv = nvs_set_u8(g_nvsHandle, "start_delay", g_persistent.startDelay);
+        rv = nvs_set_u8(g_nvsHandle, "drop_ch", g_persistent.droppletChannel);
+        if (rv != ESP_OK) {
+          ESP_LOGE(TAG, "Failed to update droplet channel");
+        }
+      }
+      else {
+        ESP_LOGE(TAG, "Error getting droplet channel => rv=%d", rv);
+      }
+
+      // Write changed value to persistent storage
+      rv = nvs_set_u8(g_nvsHandle, "drop_filt", g_persistent.dropletFilterAdjacentChannel);
+      if (rv != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update droplet adj. freq. filter");
+      }
+
+      // ttl
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "ttl", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found query parameter => ttl=%s", param);
+        g_persistent.dropletTtl = atoi(param);
+        // Write changed value to persistent storage
+        rv = nvs_set_u8(g_nvsHandle, "drop_ttl", g_persistent.dropletTtl);
         if (rv != ESP_OK) {
           ESP_LOGE(TAG, "Failed to update start delay");
         }
       }
       else {
-        ESP_LOGE(TAG, "Error getting strtdly => rv=%d", rv);
+        ESP_LOGE(TAG, "Error getting droplet ttl => rv=%d", rv);
       }
 
-      // GUID
-      if (ESP_OK == (rv = httpd_query_key_value(buf, "guid", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => guid=%s", param);
-
-        char *p = urlDecode(param);
-        ESP_LOGI(TAG, "URL Decode => guid=%s", p);
-        if (VSCP_ERROR_SUCCESS != vscp_fwhlp_parseGuid(g_persistent.nodeGuid, p, NULL)) {
-          ESP_LOGE(TAG, "Failed to read GUID");
+      // rssi
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "rssi", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found query parameter => rssi=%s", param);
+        g_persistent.dropletFilterWeakSignal = atoi(param);
+        // Make shure it's negative
+        if (g_persistent.dropletFilterWeakSignal > 0) {
+          g_persistent.dropletFilterWeakSignal *= -1;
         }
-
         // Write changed value to persistent storage
-        rv = nvs_set_blob(g_nvsHandle, "guid", g_persistent.nodeGuid, 16);
+        rv = nvs_set_i8(g_nvsHandle, "drop_rssi", g_persistent.dropletFilterWeakSignal);
         if (rv != ESP_OK) {
-          ESP_LOGE(TAG, "Failed to write node GUID to nvs. rv=%d", rv);
+          ESP_LOGE(TAG, "Failed to update droplet rssi");
         }
       }
       else {
-        ESP_LOGE(TAG, "Error getting guid => rv=%d", rv);
+        ESP_LOGE(TAG, "Error getting droplet rssi => rv=%d", rv);
+      }
+
+      // Encryption
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "enc", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found query parameter => enc=%s", param);
+        g_persistent.dropletEncryption = atoi(param);
+        rv                             = nvs_set_u8(g_nvsHandle, "drop_enc", g_persistent.dropletEncryption);
+        if (rv != ESP_OK) {
+          ESP_LOGE(TAG, "Failed to update droplet encryption");
+        }
+      }
+      else {
+        ESP_LOGE(TAG, "Error getting droplet enc => rv=%d", rv);
       }
 
       rv = nvs_commit(g_nvsHandle);
@@ -1646,8 +1867,8 @@ do_config_droplet_get_handler(httpd_req_t *req)
     free(buf);
   }
   const char *resp_str =
-    "<html><head><meta charset='utf-8'><meta http-equiv=\"refresh\" content=\"1;url=cfgmodule\" "
-    "/><style>" WEBPAGE_STYLE_CSS "</style></head><body><h2 class=\"name\">saving module data...</h2></body></html>";
+    "<html><head><meta charset='utf-8'><meta http-equiv=\"refresh\" content=\"1;url=cfgdroplet\" "
+    "/><style>" WEBPAGE_STYLE_CSS "</style></head><body><h2 class=\"name\">saving droplet data...</h2></body></html>";
   httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
 
   return ESP_OK;
@@ -1757,7 +1978,7 @@ do_config_vscplink_get_handler(httpd_req_t *req)
 
       // url
       if (ESP_OK == (rv = httpd_query_key_value(buf, "url", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => url=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => url=%s", param);
         strncpy(g_persistent.vscplinkUrl, param, sizeof(g_persistent.vscplinkUrl) - 1);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "vscp_url", g_persistent.vscplinkUrl);
@@ -1771,7 +1992,7 @@ do_config_vscplink_get_handler(httpd_req_t *req)
 
       // port
       if (ESP_OK == (rv = httpd_query_key_value(buf, "port", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => port=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => port=%s", param);
         g_persistent.vscplinkPort = atoi(param);
         // Write changed value to persistent storage
         rv = nvs_set_u16(g_nvsHandle, "vscp_port", g_persistent.vscplinkPort);
@@ -1785,7 +2006,7 @@ do_config_vscplink_get_handler(httpd_req_t *req)
 
       // username
       if (ESP_OK == (rv = httpd_query_key_value(buf, "user", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => user=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => user=%s", param);
         strncpy(g_persistent.vscplinkUsername, param, sizeof(g_persistent.vscplinkUsername) - 1);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "vscp_user", g_persistent.vscplinkUsername);
@@ -1799,7 +2020,7 @@ do_config_vscplink_get_handler(httpd_req_t *req)
 
       // password
       if (ESP_OK == (rv = httpd_query_key_value(buf, "password", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => password=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => password=%s", param);
         strncpy(g_persistent.vscplinkPassword, param, sizeof(g_persistent.vscplinkPassword) - 1);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "vscp_password", g_persistent.vscplinkPassword);
@@ -1813,7 +2034,7 @@ do_config_vscplink_get_handler(httpd_req_t *req)
 
       // key
       if (ESP_OK == (rv = httpd_query_key_value(buf, "key", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => key=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => key=%s", param);
         memset(g_persistent.vscpLinkKey, 0, 32);
         vscp_fwhlp_hex2bin(g_persistent.vscpLinkKey, 32, param);
 
@@ -1948,7 +2169,7 @@ do_config_mqtt_get_handler(httpd_req_t *req)
 
       // url
       if (ESP_OK == (rv = httpd_query_key_value(buf, "url", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => url=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => url=%s", param);
         strncpy(g_persistent.mqttUrl, param, sizeof(g_persistent.mqttUrl) - 1);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "mqtt_url", g_persistent.mqttUrl);
@@ -1962,7 +2183,7 @@ do_config_mqtt_get_handler(httpd_req_t *req)
 
       // port
       if (ESP_OK == (rv = httpd_query_key_value(buf, "port", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => port=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => port=%s", param);
         g_persistent.mqttPort = atoi(param);
         // Write changed value to persistent storage
         rv = nvs_set_u16(g_nvsHandle, "mqtt_port", g_persistent.mqttPort);
@@ -1976,7 +2197,7 @@ do_config_mqtt_get_handler(httpd_req_t *req)
 
       // clientid
       if (ESP_OK == (rv = httpd_query_key_value(buf, "client", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => clientid=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => clientid=%s", param);
         strncpy(g_persistent.mqttClientid, param, sizeof(g_persistent.mqttClientid) - 1);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "mqtt_cid", g_persistent.mqttClientid);
@@ -1990,7 +2211,7 @@ do_config_mqtt_get_handler(httpd_req_t *req)
 
       // user
       if (ESP_OK == (rv = httpd_query_key_value(buf, "user", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => user=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => user=%s", param);
         strncpy(g_persistent.mqttUsername, param, sizeof(g_persistent.mqttUsername) - 1);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "mqtt_user", g_persistent.mqttUsername);
@@ -2004,7 +2225,7 @@ do_config_mqtt_get_handler(httpd_req_t *req)
 
       // password
       if (ESP_OK == (rv = httpd_query_key_value(buf, "password", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => password=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => password=%s", param);
         strncpy(g_persistent.mqttPassword, param, sizeof(g_persistent.mqttPassword) - 1);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "mqtt_password", g_persistent.mqttPassword);
@@ -2018,7 +2239,7 @@ do_config_mqtt_get_handler(httpd_req_t *req)
 
       // Subscribe
       if (ESP_OK == (rv = httpd_query_key_value(buf, "sub", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => sub=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => sub=%s", param);
         strncpy(g_persistent.mqttSub, param, sizeof(g_persistent.mqttSub) - 1);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "mqtt_sub", g_persistent.mqttSub);
@@ -2032,7 +2253,7 @@ do_config_mqtt_get_handler(httpd_req_t *req)
 
       // Publish
       if (ESP_OK == (rv = httpd_query_key_value(buf, "pub", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => pub=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => pub=%s", param);
         strncpy(g_persistent.mqttPub, param, sizeof(g_persistent.mqttPub) - 1);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "mqtt_pub", g_persistent.mqttPub);
@@ -2056,6 +2277,163 @@ do_config_mqtt_get_handler(httpd_req_t *req)
   }
   const char *resp_str =
     "<html><head><meta charset='utf-8'><meta http-equiv=\"refresh\" content=\"1;url=cfgmqtt\" "
+    "/><style>" WEBPAGE_STYLE_CSS "</style></head><body><h2 class=\"name\">saving module data...</h2></body></html>";
+  httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
+
+  // vTaskDelay(2000 / portTICK_PERIOD_MS);
+  // vprintf_like_t logFunc = esp_log_set_vprintf(g_stdLogFunc);
+  // esp_wifi_stop();
+  // esp_wifi_deinit();
+  //  Configuration for the provisioning manager
+  // esp_wifi_restore();
+  // wifi_prov_mgr_reset_provisioning();
+
+  return ESP_OK;
+}
+
+// ----------------------------------------------------------------------------
+
+///////////////////////////////////////////////////////////////////////////////
+// config_web_get_handler
+//
+
+static esp_err_t
+config_web_get_handler(httpd_req_t *req)
+{
+  esp_err_t rv;
+  char *buf;
+  char *temp;
+
+  char *req_buf;
+  size_t req_buf_len;
+
+  buf = (char *) calloc(CHUNK_BUFSIZE, 1);
+  if (NULL == buf) {
+    return ESP_ERR_NO_MEM;
+  }
+
+  // Get application info data
+  const esp_app_desc_t *appDescr = esp_app_get_description();
+
+  // Get header value string length and allocate memory for length + 1,
+  // extra byte for null termination
+  req_buf_len = httpd_req_get_hdr_value_len(req, "Host") + 1;
+  if (req_buf_len > 1) {
+    req_buf = malloc(req_buf_len);
+    // Copy null terminated value string into buffer
+    if (httpd_req_get_hdr_value_str(req, "Host", req_buf, req_buf_len) == ESP_OK) {
+      ESP_LOGI(TAG, "Found header => Host: %s", req_buf);
+    }
+    free(req_buf);
+  }
+
+  sprintf(buf, WEBPAGE_START_TEMPLATE, g_persistent.nodeName, "Web server Configuration");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf, "<div><form id=but3 class=\"button\" action='/docfgweb' method='get'><fieldset>");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf, "Port:<input type=\"text\" name=\"port\" value=\"%d\" >", g_persistent.webPort);
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf, "Username:<input type=\"text\" name=\"user\" value=\"%s\" >", g_persistent.webUsername);
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf, "Password:<input type=\"text\" name=\"password\" value=\"%s\" >", g_persistent.webPassword);
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf, "<button class=\"bgrn bgrn:hover\">Save</button></fieldset></form></div>");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf, WEBPAGE_END_TEMPLATE, appDescr->version, g_persistent.nodeName);
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  httpd_resp_send_chunk(req, NULL, 0);
+
+  free(buf);
+
+  return ESP_OK;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// do_config_web_get_handler
+//
+
+static esp_err_t
+do_config_web_get_handler(httpd_req_t *req)
+{
+  esp_err_t rv;
+  char *buf;
+  size_t buf_len;
+
+  // Read URL query string length and allocate memory for length + 1,
+  // extra byte for null termination
+  buf_len = httpd_req_get_url_query_len(req) + 1;
+  if (buf_len > 1) {
+    buf = malloc(buf_len);
+    if (httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK) {
+
+      ESP_LOGI(TAG, "Found URL query => %s", buf);
+      char *param = malloc(WEBPAGE_PARAM_SIZE);
+      if (NULL == param) {
+        return ESP_ERR_ESPNOW_NO_MEM;
+        free(buf);
+      }
+
+      // port
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "port", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found query parameter => port=%s", param);
+        g_persistent.webPort = atoi(param);
+        // Write changed value to persistent storage
+        rv = nvs_set_u16(g_nvsHandle, "web_port", g_persistent.webPort);
+        if (rv != ESP_OK) {
+          ESP_LOGE(TAG, "Failed to update Web server port");
+        }
+      }
+      else {
+        ESP_LOGE(TAG, "Error getting Web server port => rv=%d", rv);
+      }
+
+      // user
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "user", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found query parameter => user=%s", param);
+        strncpy(g_persistent.webUsername, param, sizeof(g_persistent.webUsername) - 1);
+        // Write changed value to persistent storage
+        rv = nvs_set_str(g_nvsHandle, "web_user", g_persistent.webUsername);
+        if (rv != ESP_OK) {
+          ESP_LOGE(TAG, "Failed to update Web server user");
+        }
+      }
+      else {
+        ESP_LOGE(TAG, "Error getting Web server user => rv=%d", rv);
+      }
+
+      // password
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "password", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found query parameter => password=%s", param);
+        strncpy(g_persistent.webPassword, param, sizeof(g_persistent.webPassword) - 1);
+        // Write changed value to persistent storage
+        rv = nvs_set_str(g_nvsHandle, "web_password", g_persistent.webPassword);
+        if (rv != ESP_OK) {
+          ESP_LOGE(TAG, "Failed to update Web server password");
+        }
+      }
+      else {
+        ESP_LOGE(TAG, "Error getting Web server password => rv=%d", rv);
+      }
+
+      rv = nvs_commit(g_nvsHandle);
+      if (rv != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to commit updates to nvs\n");
+      }
+
+      free(param);
+    }
+
+    free(buf);
+  }
+  const char *resp_str =
+    "<html><head><meta charset='utf-8'><meta http-equiv=\"refresh\" content=\"1;url=cfgweb\" "
     "/><style>" WEBPAGE_STYLE_CSS "</style></head><body><h2 class=\"name\">saving module data...</h2></body></html>";
   httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
 
@@ -2104,14 +2482,12 @@ config_log_get_handler(httpd_req_t *req)
   sprintf(buf, "<div><form id=but3 class=\"button\" action='/docfglog' method='get'><fieldset>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  sprintf(buf,
-          "<input type=\"checkbox\" id=\"stdout\"name=\"stdout\" value=\"%s\" ",
-          g_persistent.logwrite2Stdout ? "true" : "false");
+  sprintf(buf, "<input type=\"checkbox\" id=\"stdout\"name=\"stdout\" value=\"true\" ");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
   sprintf(buf, "%s><label for=\"stdout\"> Log to stdout</label>", g_persistent.logwrite2Stdout ? "checked" : "");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  sprintf(buf, "<br /><br />Log to:<select type=\"checkbox\" name=\"type\" ");
+  sprintf(buf, "<br /><br />Log to:<select  name=\"type\" ");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
   sprintf(buf, "<option value=\"0\" %s>none</option>", (ALPHA_LOG_NONE == g_persistent.logType) ? "selected" : "");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
@@ -2130,7 +2506,7 @@ config_log_get_handler(httpd_req_t *req)
   sprintf(buf, "></select>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  sprintf(buf, "Log level:<select type=\"checkbox\" name=\"level\" ");
+  sprintf(buf, "Log level:<select name=\"level\" ");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
   sprintf(buf, "<option value=\"1\" %s>error</option>", (ESP_LOG_ERROR == g_persistent.logLevel) ? "selected" : "");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
@@ -2198,7 +2574,7 @@ do_config_log_get_handler(httpd_req_t *req)
       // stdout
       if (ESP_OK == (rv = httpd_query_key_value(buf, "stdout", param, WEBPAGE_PARAM_SIZE))) {
 
-        ESP_LOGI(TAG, "Found name query parameter => stdout=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => stdout=%s", param);
 
         if (NULL != strstr(param, "true")) {
           g_persistent.logwrite2Stdout = 1;
@@ -2206,18 +2582,19 @@ do_config_log_get_handler(httpd_req_t *req)
         else {
           g_persistent.logwrite2Stdout = 0;
         }
-        rv = nvs_set_u8(g_nvsHandle, "log_stdout", g_persistent.logwrite2Stdout);
-        if (rv != ESP_OK) {
-          ESP_LOGE(TAG, "Failed to update log-stdout");
-        }
       }
       else {
-        ESP_LOGE(TAG, "Error getting stdout => rv=%d", rv);
+        g_persistent.logwrite2Stdout = 0;
+      }
+
+      rv = nvs_set_u8(g_nvsHandle, "log_stdout", g_persistent.logwrite2Stdout);
+      if (rv != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update log-stdout");
       }
 
       // type
       if (ESP_OK == (rv = httpd_query_key_value(buf, "type", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => type=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => type=%s", param);
         g_persistent.logType = atoi(param);
 
         rv = nvs_set_u8(g_nvsHandle, "log_type", g_persistent.logType);
@@ -2231,7 +2608,7 @@ do_config_log_get_handler(httpd_req_t *req)
 
       // level
       if (ESP_OK == (rv = httpd_query_key_value(buf, "level", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => level=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => level=%s", param);
         g_persistent.logLevel = atoi(param);
 
         rv = nvs_set_u8(g_nvsHandle, "log_level", g_persistent.logLevel);
@@ -2245,7 +2622,7 @@ do_config_log_get_handler(httpd_req_t *req)
 
       // retries
       if (ESP_OK == (rv = httpd_query_key_value(buf, "retries", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => retries=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => retries=%s", param);
         g_persistent.logRetries = atoi(param);
 
         rv = nvs_set_u8(g_nvsHandle, "log_retries", g_persistent.logRetries);
@@ -2259,7 +2636,7 @@ do_config_log_get_handler(httpd_req_t *req)
 
       // port
       if (ESP_OK == (rv = httpd_query_key_value(buf, "port", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => port=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => port=%s", param);
         g_persistent.logPort = atoi(param);
 
         rv = nvs_set_u8(g_nvsHandle, "log_port", g_persistent.logPort);
@@ -2273,7 +2650,7 @@ do_config_log_get_handler(httpd_req_t *req)
 
       // url
       if (ESP_OK == (rv = httpd_query_key_value(buf, "url", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found name query parameter => url=%s", param);
+        ESP_LOGI(TAG, "Found query parameter => url=%s", param);
         strncpy(g_persistent.logUrl, param, sizeof(g_persistent.logUrl));
 
         rv = nvs_set_str(g_nvsHandle, "log_url", g_persistent.logUrl);
@@ -2293,7 +2670,7 @@ do_config_log_get_handler(httpd_req_t *req)
           free(buf);
           return ESP_ERR_ESPNOW_NO_MEM;
         }
-        ESP_LOGI(TAG, "Found name query parameter => topic=%s", pdecoded);
+        ESP_LOGI(TAG, "Found query parameter => topic=%s", pdecoded);
         strncpy(g_persistent.logMqttTopic, pdecoded, sizeof(g_persistent.logMqttTopic));
         free(pdecoded);
 
@@ -2700,6 +3077,16 @@ default_get_handler(httpd_req_t *req)
   if (0 == strncmp(req->uri, "/docfgmqtt", 10)) {
     ESP_LOGV(TAG, "--------- docfgmqtt ---------\n");
     return do_config_mqtt_get_handler(req);
+  }
+
+  if (0 == strncmp(req->uri, "/cfgweb", 7)) {
+    ESP_LOGV(TAG, "--------- cfgweb ---------\n");
+    return config_web_get_handler(req);
+  }
+
+  if (0 == strncmp(req->uri, "/docfgweb", 9)) {
+    ESP_LOGV(TAG, "--------- docfgweb ---------\n");
+    return do_config_web_get_handler(req);
   }
 
   if (0 == strncmp(req->uri, "/cfglog", 7)) {

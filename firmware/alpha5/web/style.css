@@ -133,13 +133,13 @@ td {
 
 .name {
   font-family: Arial, Helvetica, sans-serif;
-  font-size: larger;
+  font-size: small;
   font-weight: bold;
   color: #2c54aa;
 }    
 .prop {
    font-family: Arial, Helvetica, sans-serif;
-   font-size: normal;
+   font-size: small;
    font-weight: lighter;
    color: #a7aca7;
 }   

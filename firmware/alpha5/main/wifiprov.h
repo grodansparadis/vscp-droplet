@@ -31,6 +31,8 @@
 #ifndef __WIFI_PROV_H__
 #define __WIFI_PROV_H__
 
+#define PROV_MGR_MAX_RETRY_CNT  5
+
 // QR info provisioning
 #define PROV_QR_VERSION       "v1"
 //#define PROV_TRANSPORT_SOFTAP "softap"

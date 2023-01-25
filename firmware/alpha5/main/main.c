@@ -59,6 +59,7 @@
 #include <nvs_flash.h>
 #include <esp_spiffs.h>
 #include <lwip/sockets.h>
+#include <esp_event.h>
 
 #include <esp_crt_bundle.h>
 
@@ -82,16 +83,10 @@
 
 #include "net_logging.h"
 
-// #ifdef CONFIG_PROV_TRANSPORT_BLE
-// #include <wifi_provisioning/scheme_ble.h>
-// #endif /* CONFIG_PROV_TRANSPORT_BLE */
-
-// #ifdef CONFIG_PROV_TRANSPORT_SOFTAP
-// #include <wifi_provisioning/scheme_softap.h>
-// #endif /* CONFIG_PROV_TRANSPORT_SOFTAP */
+extern vprintf_like_t g_stdLogFunc; // net logging
 
 const char *pop_data   = "VSCP ALPHA";
-static const char *TAG = "ALPHA DROPLET";
+static const char *TAG = "ALPHA";
 
 #define HASH_LEN   32
 #define BUTTON_CNT 1
@@ -224,20 +219,29 @@ node_persistent_config_t g_persistent = {
   .webPassword = "secret",
 
   // VSCP tcp/ip Link
-  .vscplinkUrl = { 0 },
-  .vscplinkPort = VSCP_DEFAULT_TCP_PORT,
+  .vscplinkUrl      = { 0 },
+  .vscplinkPort     = VSCP_DEFAULT_TCP_PORT,
   .vscplinkUsername = "vscp",
   .vscplinkPassword = "secret",
-  .vscpLinkKey = VSCP_DEFAULT_KEY32,
+  .vscpLinkKey      = { 0 }, // VSCP_DEFAULT_KEY32,
 
   // MQTT
-  .mqttUrl = { 0 },
-  .mqttPort = 1883,
+  .mqttUrl      = { 0 },
+  .mqttPort     = 1883,
   .mqttClientid = "123",
   .mqttUsername = "vscp",
   .mqttPassword = "secret",
-  .mqttSub = "vscp/%guid/sub/#",
-  .mqttPub = "vscp/%guid/",
+  .mqttSub      = "vscp/%guid/sub/#",
+  .mqttPub      = "vscp/%guid/",
+
+  // Droplet
+  .dropletLongRange             = false,
+  .droppletChannel              = 0, // Use wifi channel
+  .dropletTtl                   = 32,
+  .dropletForwardEnable         = true, // Forward when packets are received
+  .dropletEncryption            = 1,    // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256
+  .dropletFilterAdjacentChannel = true, // Don't receive if from other channel
+  .dropletFilterWeakSignal      = -67,  // Filter onm RSSI (zero is no rssi filtering)
 };
 
 //----------------------------------------------------------
@@ -285,6 +289,10 @@ readPersistentConfigs(void)
   esp_err_t rv;
   char buf[80];
   size_t length = sizeof(buf);
+  uint8_t val;
+  
+  // Set default primary key
+  vscp_fwhlp_hex2bin(g_persistent.vscpLinkKey, 32, VSCP_DEFAULT_KEY32);
 
   // boot counter
   rv = nvs_get_u32(g_nvsHandle, "boot_counter", &g_persistent.bootCnt);
@@ -424,7 +432,7 @@ readPersistentConfigs(void)
 
   // VSCP Link host
   length = sizeof(g_persistent.vscplinkUrl);
-  rv = nvs_get_str(g_nvsHandle, "vscp_url", g_persistent.vscplinkUrl, &length);
+  rv     = nvs_get_str(g_nvsHandle, "vscp_url", g_persistent.vscplinkUrl, &length);
   if (rv != ESP_OK) {
     ESP_LOGE(TAG, "Failed to read 'VSCP link host' will be set to default. ret=%d", rv);
     rv = nvs_set_str(g_nvsHandle, "vscp_url", DEFAULT_TCPIP_USER);
@@ -444,7 +452,7 @@ readPersistentConfigs(void)
 
   // VSCP Link key
   length = sizeof(g_persistent.vscpLinkKey);
-  rv = nvs_get_blob(g_nvsHandle, "vscp_key", (const char *)g_persistent.vscpLinkKey, &length);
+  rv     = nvs_get_blob(g_nvsHandle, "vscp_key", (char *) g_persistent.vscpLinkKey, &length);
   if (rv != ESP_OK) {
     ESP_LOGE(TAG, "Failed to read 'VSCP link_key' will be set to default. ret=%d", rv);
     rv = nvs_set_blob(g_nvsHandle, "vscp_key", g_persistent.vscpLinkKey, sizeof(g_persistent.vscpLinkKey));
@@ -455,7 +463,7 @@ readPersistentConfigs(void)
 
   // VSCP Link Username
   length = sizeof(g_persistent.vscplinkUsername);
-  rv = nvs_get_str(g_nvsHandle, "vscp_user", g_persistent.vscplinkUsername, &length);
+  rv     = nvs_get_str(g_nvsHandle, "vscp_user", g_persistent.vscplinkUsername, &length);
   if (rv != ESP_OK) {
     ESP_LOGE(TAG, "Failed to read 'VSCP Username' will be set to default. ret=%d", rv);
     rv = nvs_set_str(g_nvsHandle, "vscp_user", DEFAULT_TCPIP_USER);
@@ -538,7 +546,7 @@ readPersistentConfigs(void)
 
   // MQTT host
   length = sizeof(g_persistent.mqttUrl);
-  rv = nvs_get_str(g_nvsHandle, "mqtt_url", g_persistent.mqttUrl, &length);
+  rv     = nvs_get_str(g_nvsHandle, "mqtt_url", g_persistent.mqttUrl, &length);
   if (rv != ESP_OK) {
     ESP_LOGE(TAG, "Failed to read 'MQTT host' will be set to default. ret=%d", rv);
     rv = nvs_set_str(g_nvsHandle, "mqtt_url", g_persistent.mqttUrl);
@@ -558,7 +566,7 @@ readPersistentConfigs(void)
 
   // MQTT client
   length = sizeof(g_persistent.mqttClientid);
-  rv = nvs_get_str(g_nvsHandle, "mqtt_cid", g_persistent.mqttClientid, &length);
+  rv     = nvs_get_str(g_nvsHandle, "mqtt_cid", g_persistent.mqttClientid, &length);
   if (rv != ESP_OK) {
     ESP_LOGE(TAG, "Failed to read 'MQTT clientid' will be set to default. ret=%d", rv);
     rv = nvs_set_str(g_nvsHandle, "mqtt_cid", g_persistent.mqttClientid);
@@ -569,7 +577,7 @@ readPersistentConfigs(void)
 
   // MQTT Link Username
   length = sizeof(g_persistent.mqttUsername);
-  rv = nvs_get_str(g_nvsHandle, "mqtt_user", g_persistent.mqttUsername, &length);
+  rv     = nvs_get_str(g_nvsHandle, "mqtt_user", g_persistent.mqttUsername, &length);
   if (rv != ESP_OK) {
     ESP_LOGE(TAG, "Failed to read 'MQTT user' will be set to default. ret=%d", rv);
     rv = nvs_set_str(g_nvsHandle, "mqtt_user", DEFAULT_TCPIP_USER);
@@ -591,7 +599,7 @@ readPersistentConfigs(void)
 
   // MQTT subscribe
   length = sizeof(g_persistent.mqttSub);
-  rv = nvs_get_str(g_nvsHandle, "mqtt_sub", g_persistent.mqttSub, &length);
+  rv     = nvs_get_str(g_nvsHandle, "mqtt_sub", g_persistent.mqttSub, &length);
   if (rv != ESP_OK) {
     ESP_LOGE(TAG, "Failed to read 'MQTT sub' will be set to default. ret=%d", rv);
     rv = nvs_set_str(g_nvsHandle, "mqtt_sub", g_persistent.mqttSub);
@@ -602,12 +610,123 @@ readPersistentConfigs(void)
 
   // MQTT publish
   length = sizeof(g_persistent.mqttPub);
-  rv = nvs_get_str(g_nvsHandle, "mqtt_pub", g_persistent.mqttPub, &length);
+  rv     = nvs_get_str(g_nvsHandle, "mqtt_pub", g_persistent.mqttPub, &length);
   if (rv != ESP_OK) {
     ESP_LOGE(TAG, "Failed to read 'MQTT pub' will be set to default. ret=%d", rv);
     rv = nvs_set_str(g_nvsHandle, "mqtt_pub", g_persistent.mqttPub);
     if (rv != ESP_OK) {
       ESP_LOGE(TAG, "Failed to save MQTT pub");
+    }
+  }
+
+  // WEB server ----------------------------------------------------------------
+
+  // WEB port
+  rv = nvs_get_u16(g_nvsHandle, "web_port", &g_persistent.webPort);
+  if (ESP_OK != rv) {
+    rv = nvs_set_u16(g_nvsHandle, "web_port", g_persistent.webPort);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to update Web server port");
+    }
+  }
+
+  // WEB Username
+  length = sizeof(g_persistent.webUsername);
+  rv     = nvs_get_str(g_nvsHandle, "web_user", g_persistent.webUsername, &length);
+  if (rv != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to read 'Web server user' will be set to default. ret=%d", rv);
+    rv = nvs_set_str(g_nvsHandle, "web_user", DEFAULT_TCPIP_USER);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to save Web Server username");
+    }
+  }
+
+  // WEB password
+  length = sizeof(g_persistent.webPassword);
+  rv     = nvs_get_str(g_nvsHandle, "web_password", g_persistent.webPassword, &length);
+  if (rv != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to read 'Web server password' will be set to default. ret=%d", rv);
+    nvs_set_str(g_nvsHandle, "web_password", DEFAULT_TCPIP_PASSWORD);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to save Web server password");
+    }
+  }
+
+  // Droplet ----------------------------------------------------------------
+
+  // Long Range
+  rv = nvs_get_u8(g_nvsHandle, "drop_lr", &val);
+  if (ESP_OK != rv) {
+    val = (uint8_t)g_persistent.dropletLongRange;
+    rv = nvs_set_u8(g_nvsHandle, "drop_lr", g_persistent.dropletLongRange);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to update droplet long range");
+    }
+  }
+  else {
+    g_persistent.dropletLongRange = (bool)val;
+  }
+
+  // Channel
+  rv = nvs_get_u8(g_nvsHandle, "drop_ch", &g_persistent.droppletChannel);
+  if (ESP_OK != rv) {
+    rv = nvs_set_u8(g_nvsHandle, "drop_ch", g_persistent.droppletChannel);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to update droplet channel");
+    }
+  }
+
+  // Default ttl
+  rv = nvs_get_u8(g_nvsHandle, "drop_ttl", &g_persistent.dropletTtl);
+  if (ESP_OK != rv) {
+    rv = nvs_set_u8(g_nvsHandle, "drop_ttk", g_persistent.dropletTtl);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to update droplet ttl");
+    }
+  }
+
+  // Forward
+  rv = nvs_get_u8(g_nvsHandle, "drop_fw", &val);
+  if (ESP_OK != rv) {
+    val = (uint8_t)g_persistent.dropletForwardEnable;
+    rv = nvs_set_u8(g_nvsHandle, "drop_fw", g_persistent.dropletForwardEnable);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to update droplet forward");
+    }
+  }
+  else {
+    g_persistent.dropletForwardEnable = (bool)val;
+  }
+  
+  
+  // Encryption
+  rv = nvs_get_u8(g_nvsHandle, "drop_enc", &g_persistent.dropletEncryption);
+  if (ESP_OK != rv) {
+    rv = nvs_set_u8(g_nvsHandle, "drop_enc", g_persistent.dropletEncryption);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to update droplet encryption");
+    }
+  }
+
+  // Adj filter channel
+  rv = nvs_get_u8(g_nvsHandle, "drop_filt", &val);
+  if (ESP_OK != rv) {
+    val = (uint8_t)g_persistent.dropletFilterAdjacentChannel;
+    rv = nvs_set_u8(g_nvsHandle, "drop_filt", g_persistent.dropletFilterAdjacentChannel);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to update droplet adj channel filter");
+    }
+  }
+  else {
+    g_persistent.dropletFilterAdjacentChannel = (bool)val;
+  }
+
+  // RSSI limit
+  rv = nvs_get_i8(g_nvsHandle, "drop_rssi", &g_persistent.dropletFilterWeakSignal);
+  if (ESP_OK != rv) {
+    rv = nvs_set_u8(g_nvsHandle, "drop_rssi", g_persistent.dropletFilterWeakSignal);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to update droplet RSSI");
     }
   }
 
@@ -825,6 +944,7 @@ button_long_press_hold_cb(void *arg, void *data)
            "Will restore defaults in %u seconds",
            (int) (10 - ((getMilliSeconds() - g_restore_defaults_timer) / 1000)));
   if ((getMilliSeconds() - g_restore_defaults_timer) > 10000) {
+    vprintf_like_t logFunc = esp_log_set_vprintf(g_stdLogFunc);
     wifi_prov_mgr_reset_provisioning();
     esp_restart();
   }
@@ -1185,10 +1305,7 @@ system_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, v
 {
   static bool s_ap_staconnected_flag = false;
   static bool s_sta_connected_flag   = false;
-
-#ifdef CONFIG_RESET_PROV_MGR_ON_FAILURE
   static int retries;
-#endif
 
   if (event_base == WIFI_PROV_EVENT) {
 
@@ -1215,29 +1332,26 @@ system_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, v
                  "\n\tPlease reset to factory and retry provisioning",
                  (*reason == WIFI_PROV_STA_AUTH_ERROR) ? "Wi-Fi station authentication failed"
                                                        : "Wi-Fi access-point not found");
-#ifdef CONFIG_RESET_PROV_MGR_ON_FAILURE
         retries++;
-        if (retries >= CONFIG_PROV_MGR_MAX_RETRY_CNT) {
+        if (retries >= PROV_MGR_MAX_RETRY_CNT) {
           ESP_LOGI(TAG,
                    "Failed to connect with provisioned AP, reseting "
                    "provisioned credentials");
           wifi_prov_mgr_reset_sm_state_on_failure();
           retries = 0;
         }
-#endif
         break;
       }
 
       case WIFI_PROV_CRED_SUCCESS:
         ESP_LOGI(TAG, "Provisioning successful");
-#ifdef CONFIG_RESET_PROV_MGR_ON_FAILURE
         retries = 0;
-#endif
         break;
 
       case WIFI_PROV_END:
         // De-initialize manager once provisioning is finished
         wifi_prov_mgr_deinit();
+        ESP_LOGI(TAG, "Provisioning manager released");
         break;
 
       default:
@@ -1274,7 +1388,6 @@ system_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, v
 
       case WIFI_EVENT_STA_CONNECTED: {
         wifi_event_sta_connected_t *event = (wifi_event_sta_connected_t *) event_data;
-        char *ttt                         = MACSTR;
         ESP_LOGI(TAG,
                  "Connected to %s (BSSID: " MACSTR ", Channel: %d)",
                  event->ssid,
@@ -1292,6 +1405,16 @@ system_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, v
         esp_wifi_connect();
         break;
       }
+#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
+      case WIFI_EVENT_AP_STACONNECTED:
+        ESP_LOGI(TAG, "SoftAP transport: Connected!");
+        break;
+      case WIFI_EVENT_AP_STADISCONNECTED:
+        ESP_LOGI(TAG, "SoftAP transport: Disconnected!");
+        break;
+#endif
+      default:
+        break;
     }
   }
   // Post 5.0 stable
@@ -1498,9 +1621,6 @@ app_main(void)
 
   // Register our event handler for Wi-Fi, IP and Provisioning related events
   ESP_ERROR_CHECK(esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, &system_event_handler, NULL));
-  ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &system_event_handler, NULL));
-  ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &system_event_handler, NULL));
-  ESP_ERROR_CHECK(esp_event_handler_register(ALPHA_EVENT, ESP_EVENT_ANY_ID, &system_event_handler, NULL));
 
   /* esp_event_loop_args_t alpha_loop_config = {
     .queue_size = 10,
@@ -1545,7 +1665,14 @@ app_main(void)
      * We don't need the manager as device is already provisioned,
      * so let's release it's resources
      */
+    ESP_LOGI(TAG, "Deinit wifi manager");
     wifi_prov_mgr_deinit();
+
+    ESP_LOGI(TAG, "???????????????????????????????????????????????????????????????");
+
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &system_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &system_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(ALPHA_EVENT, ESP_EVENT_ANY_ID, &system_event_handler, NULL));
 
     // Start Wi-Fi soft ap & station
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
@@ -1570,11 +1697,11 @@ app_main(void)
     uint8_t cnt = 20; // 20 seconds until reboot due to no IP address
     while (!xEventGroupWaitBits(g_wifi_event_group, WIFI_CONNECTED_EVENT, false, true, 1000 / portTICK_PERIOD_MS)) {
       if (--cnt == 0) {
-        esp_wifi_disconnect();
-        esp_restart();
+        // esp_wifi_disconnect();
+        // esp_restart();
         vTaskDelay(2000 / portTICK_PERIOD_MS);
       }
-      ESP_LOGI(TAG, "Waiting for IP address. %d", cnt);
+      // ESP_LOGI(TAG, "Waiting for IP address. %d", cnt);
     }
   }
   esp_event_post(/*_to(alpha_loop_handle,*/ ALPHA_EVENT, ALPHA_GET_IP_ADDRESS_STOP, NULL, 0, portMAX_DELAY);
@@ -1681,6 +1808,7 @@ app_main(void)
   }
 
   while (true) {
+
     struct dirent *de = readdir(dir);
     if (!de) {
       break;

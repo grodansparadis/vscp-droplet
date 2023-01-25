@@ -22,6 +22,8 @@
 
 #include "net_logging.h"
 
+vprintf_like_t g_stdLogFunc;
+
 MessageBufferHandle_t xMessageBufferTrans;
 bool writeToStdout;
 
@@ -54,12 +56,12 @@ logging_vprintf(const char *fmt, va_list l)
   }
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// udp_client
-//
-
 void
 udp_client(void *pvParameters);
+
+///////////////////////////////////////////////////////////////////////////////
+// udp_logging_init
+//
 
 esp_err_t
 udp_logging_init(char *ipaddr, unsigned long port, int16_t enableStdout)
@@ -83,7 +85,7 @@ udp_logging_init(char *ipaddr, unsigned long port, int16_t enableStdout)
 
   // Set function used to output log entries.
   writeToStdout = enableStdout;
-  esp_log_set_vprintf(logging_vprintf);
+  g_stdLogFunc = esp_log_set_vprintf(logging_vprintf);
   return ESP_OK;
 }
 
@@ -116,7 +118,7 @@ tcp_logging_init(char *ipaddr, unsigned long port, int16_t enableStdout)
 
   // Set function used to output log entries.
   writeToStdout = enableStdout;
-  esp_log_set_vprintf(logging_vprintf);
+  g_stdLogFunc = esp_log_set_vprintf(logging_vprintf);
   return ESP_OK;
 }
 
@@ -149,7 +151,7 @@ mqtt_logging_init(char *url, char *topic, int16_t enableStdout)
 
   // Set function used to output log entries.
   writeToStdout = enableStdout;
-  esp_log_set_vprintf(logging_vprintf);
+  g_stdLogFunc = esp_log_set_vprintf(logging_vprintf);
   return ESP_OK;
 }
 
@@ -181,6 +183,6 @@ http_logging_init(char *url, int16_t enableStdout)
 
   // Set function used to output log entries.
   writeToStdout = enableStdout;
-  esp_log_set_vprintf(logging_vprintf);
+  g_stdLogFunc = esp_log_set_vprintf(logging_vprintf);
   return ESP_OK;
 }

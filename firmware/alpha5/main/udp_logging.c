@@ -31,8 +31,9 @@ udp_dump(char *id, char *data, int len)
   printf("[%s]\n", id);
   for (i = 0; i < len; i++) {
     printf("%0x ", data[i]);
-    if ((i % 10) == 9)
+    if ((i % 10) == 9) {
       printf("\n");
+    }
   }
   printf("\n");
 }
