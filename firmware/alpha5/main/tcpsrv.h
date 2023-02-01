@@ -27,11 +27,12 @@
   SOFTWARE.
 */
 
-#ifndef __TCPSRV__
-#define __TCPSRV__
+#ifndef __VSCP_LINK_TCPSRV__
+#define __VSCP_LINK_TCPSRV__
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include "freertos/semphr.h"
 
 #include <vscp.h>
 #include <vscp-fifo.h>
@@ -39,58 +40,66 @@
 #include <vscp-link-protocol.h>
 #include <vscp-firmware-level2.h>
 
+// Buffer
+#define TCPIP_BUF_MAX_SIZE (1024 * 3)
 
-
-// Buffer 
-#define TCPIP_BUF_MAX_SIZE (1024)
-
-/** 
+/**
  * VSCP TCP link protocol character buffer size
  */
 #ifndef DATA_BUF_SIZE
 #define DATA_BUF_SIZE 512
 #endif
 
-/** 
- * Max number of events in the receive fifo 
+/**
+ * Max number of events in the receive fifo
+ * (Events from Droplet to VSCP link client)
  */
-#define RECEIVE_FIFO_SIZE 16
+#define DROPLET_QUEUE_SIZE 4
 
-/** 
- * Max number of events in each of the transmit fifos  
+/**
+ * Max number of events in each of the transmit queues
+ * (Events to Droplet from VSCP link client)
  */
-#define TRANSMIT_FIFO_SIZE 16
+#define CLIENT_QUEUE_SIZE 4
 
-/* 
-  Socket context 
+/*
+  Socket context
   This is the context for each open socket/channel.
 */
 typedef struct _vscpctx {
   int id;
-  int sock;                                     // Socket
-  size_t size;                                  // Number of characters in buffer
-  char buf[TCPIP_BUF_MAX_SIZE];                 // Command Buffer
-  char user[VSCP_LINK_MAX_USER_NAME_LENGTH];    // Username storage
-  //vscp_fifo_t fifoEventsOut;                  // VSCP event send fifo
-  QueueHandle_t xmsg_Out;
-  int bValidated;                               // User is validated
-  uint8_t privLevel;                            // User privilege level 0-15
-  int bRcvLoop;                                 // Receive loop is enabled if non zero
-  vscpEventFilter filter;                       // Filter for events
-  VSCPStatistics statistics;                    // VSCP Statistics
-  VSCPStatus status;                            // VSCP status
-  uint32_t last_rcvloop_time;                   // Time of last received event
+  int sock;                                  // Socket
+  size_t size;                               // Number of characters in buffer
+  char buf[TCPIP_BUF_MAX_SIZE];              // Command Buffer
+  char user[VSCP_LINK_MAX_USER_NAME_LENGTH]; // Username storage
+  SemaphoreHandle_t mutexQueue;              // Protect the queue
+  QueueHandle_t queueClient;                 // VSCP events to VSCP link client
+  int bValidated;                            // User is validated
+  uint8_t privLevel;                         // User privilege level 0-15
+  int bRcvLoop;                              // Receive loop is enabled if non zero
+  vscpEventFilter filter;                    // Filter for events
+  VSCPStatistics statistics;                 // VSCP Statistics
+  VSCPStatus status;                         // VSCP status
+  uint32_t last_rcvloop_time;                // Time of last received event
 } vscpctx_t;
 
 #define MSG_MAX_CLIENTS "Max number of clients reached. Disconnecting.\r\n"
 
 /**
  * @brief Set defaults for the Context Defaults object
- * 
+ *
  * @param pctx Pointer to context
  */
 void
 setContextDefaults(vscpctx_t *pctx);
+
+/**
+ * @brief Send event ex to all active clients
+ * @param pex Pointer to EventEx to send
+ * @return VSCP_EVENT_SUCCESS if all web OK. Error code otherwise.
+ */
+int
+sendEventExToAll(vscpEvent *pev);
 
 /*!
   VSCP tcp/ip link protocol task

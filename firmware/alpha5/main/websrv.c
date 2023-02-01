@@ -272,46 +272,46 @@ http_auth_basic(const char *username, const char *password)
 // %d4    - RSSI threshold
 //
 
-static void
-str_replace(char *target, const char *needle, const char *replacement)
-{
-  char buf[1024]     = { 0 };
-  char *insert_point = &buf[0];
-  const char *tmp    = target;
-  size_t needle_len  = strlen(needle);
-  size_t repl_len    = strlen(replacement);
+// static void
+// str_replace(char *target, const char *needle, const char *replacement)
+// {
+//   char buf[1024]     = { 0 };
+//   char *insert_point = &buf[0];
+//   const char *tmp    = target;
+//   size_t needle_len  = strlen(needle);
+//   size_t repl_len    = strlen(replacement);
 
-  while (1) {
-    const char *p = strstr(tmp, needle);
+//   while (1) {
+//     const char *p = strstr(tmp, needle);
 
-    // walked past last occurrence of needle; copy remaining part
-    if (p == NULL) {
-      strcpy(insert_point, tmp);
-      break;
-    }
+//     // walked past last occurrence of needle; copy remaining part
+//     if (p == NULL) {
+//       strcpy(insert_point, tmp);
+//       break;
+//     }
 
-    // copy part before needle
-    memcpy(insert_point, tmp, p - tmp);
-    insert_point += p - tmp;
+//     // copy part before needle
+//     memcpy(insert_point, tmp, p - tmp);
+//     insert_point += p - tmp;
 
-    // copy replacement string
-    memcpy(insert_point, replacement, repl_len);
-    insert_point += repl_len;
+//     // copy replacement string
+//     memcpy(insert_point, replacement, repl_len);
+//     insert_point += repl_len;
 
-    // adjust pointers, move on
-    tmp = p + needle_len;
-  }
+//     // adjust pointers, move on
+//     tmp = p + needle_len;
+//   }
 
-  // write altered string back to target
-  strcpy(target, buf);
-}
+//   // write altered string back to target
+//   strcpy(target, buf);
+// }
 
-static esp_err_t
-esapeBuf(const char buf, size_t len)
-{
+// static esp_err_t
+// esapeBuf(const char buf, size_t len)
+// {
 
-  return ESP_OK;
-}
+//   return ESP_OK;
+// }
 
 ///////////////////////////////////////////////////////////////////////////////
 // info_get_handler
@@ -322,7 +322,7 @@ esapeBuf(const char buf, size_t len)
 static esp_err_t
 info_get_handler(httpd_req_t *req)
 {
-  esp_err_t rv;
+  //esp_err_t rv;
   char *buf;
   char *temp;
 
@@ -431,13 +431,13 @@ info_get_handler(httpd_req_t *req)
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
   uint32_t chipId;
-  rv = esp_flash_read_id(NULL, &chipId);
+  esp_flash_read_id(NULL, &chipId);
   // printf("Flash chip id: %04lX\n", chipId);
   sprintf(buf, "<tr><td class=\"name\">Flash chip id:</td><td class=\"prop\">%04lX</td></tr>", chipId);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
   uint64_t uniqueId;
-  rv = esp_flash_read_unique_chip_id(NULL, &uniqueId);
+  esp_flash_read_unique_chip_id(NULL, &uniqueId);
   // printf("Unique flash chip id: %08llX\n", uniqueId);
   sprintf(buf, "<tr><td class=\"name\">Unique flash chip id:</td><td class=\"prop\">%08llX</td></tr>", uniqueId);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
@@ -572,7 +572,7 @@ info_get_handler(httpd_req_t *req)
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
   wifi_mode_t mode;
-  rv = esp_wifi_get_mode(&mode);
+  esp_wifi_get_mode(&mode);
   switch (mode) {
 
     case WIFI_MODE_STA:
@@ -597,13 +597,13 @@ info_get_handler(httpd_req_t *req)
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
   wifi_sta_list_t sta;
-  rv = esp_wifi_ap_get_sta_list(&sta);
+  esp_wifi_ap_get_sta_list(&sta);
   // printf("Stations: %d\n",sta.num);
   sprintf(buf, "<tr><td class=\"name\">Stations:</td><td class=\"prop\">%d</td></tr>", sta.num);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
   wifi_ap_record_t ap_info;
-  rv = esp_wifi_sta_get_ap_info(&ap_info);
+  esp_wifi_sta_get_ap_info(&ap_info);
   // printf("bssid: " MACSTR "\n", MAC2STR(ap_info.bssid));
   sprintf(buf, "<tr><td class=\"name\">bssid:</td><td class=\"prop\">" MACSTR "</td></tr>", MAC2STR(ap_info.bssid));
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
@@ -740,13 +740,13 @@ info_get_handler(httpd_req_t *req)
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
   esp_netif_dns_info_t dns;
-  rv = esp_netif_get_dns_info(g_netif, ESP_NETIF_DNS_MAIN, &dns);
+  esp_netif_get_dns_info(g_netif, ESP_NETIF_DNS_MAIN, &dns);
   // printf("DNS DNS Server1: " IPSTR "\n", IP2STR(&dns.ip.u_addr.ip4));
   sprintf(buf,
           "<tr><td class=\"name\">DNS Server1:</td><td class=\"prop\">" IPSTR "</td></tr>",
           IP2STR(&dns.ip.u_addr.ip4));
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
-  rv = esp_netif_get_dns_info(g_netif, ESP_NETIF_DNS_BACKUP, &dns);
+  esp_netif_get_dns_info(g_netif, ESP_NETIF_DNS_BACKUP, &dns);
 
   // printf("DNS Server2: " IPSTR "\n", IP2STR(&dns.ip.u_addr.ip4));
   sprintf(buf,
@@ -987,9 +987,9 @@ static const httpd_uri_t hello = { .uri     = "/hello",
 static esp_err_t
 mainpg_get_handler(httpd_req_t *req)
 {
-  esp_err_t rv;
+  //esp_err_t rv;
   char *buf;
-  char *temp;
+  //char *temp;
 
   char *req_buf;
   size_t req_buf_len;
@@ -1053,9 +1053,9 @@ mainpg_get_handler(httpd_req_t *req)
 static esp_err_t
 config_get_handler(httpd_req_t *req)
 {
-  esp_err_t rv;
+  //esp_err_t rv;
   char *buf;
-  char *temp;
+  //char *temp;
 
   char *req_buf;
   size_t req_buf_len;
@@ -1137,9 +1137,9 @@ config_get_handler(httpd_req_t *req)
 static esp_err_t
 config_module_get_handler(httpd_req_t *req)
 {
-  esp_err_t rv;
+  //esp_err_t rv;
   char *buf;
-  char *temp;
+  //char *temp;
 
   char *req_buf;
   size_t req_buf_len;
@@ -1175,7 +1175,7 @@ config_module_get_handler(httpd_req_t *req)
           g_persistent.nodeName);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  const char *pmkstr = malloc(65);
+  char *pmkstr = malloc(65);
   for (int i = 0; i < 32; i++) {
     sprintf(pmkstr + 2 * i, "%02X", g_persistent.pmk[i]);
   }
@@ -1438,9 +1438,9 @@ print_cipher_type(httpd_req_t *req, char *buf, int pairwise_cipher, int group_ci
 static esp_err_t
 config_wifi_get_handler(httpd_req_t *req)
 {
-  esp_err_t rv;
+  //esp_err_t rv;
   char *buf;
-  char *temp;
+  //char *temp;
 
   char *req_buf;
   size_t req_buf_len;
@@ -1613,9 +1613,9 @@ do_config_wifi_get_handler(httpd_req_t *req)
 static esp_err_t
 config_droplet_get_handler(httpd_req_t *req)
 {
-  esp_err_t rv;
+  //esp_err_t rv;
   char *buf;
-  char *temp;
+  //char *temp;
 
   char *req_buf;
   size_t req_buf_len;
@@ -1883,9 +1883,9 @@ do_config_droplet_get_handler(httpd_req_t *req)
 static esp_err_t
 config_vscplink_get_handler(httpd_req_t *req)
 {
-  esp_err_t rv;
+  //esp_err_t rv;
   char *buf;
-  char *temp;
+  //char *temp;
 
   char *req_buf;
   size_t req_buf_len;
@@ -1930,7 +1930,7 @@ config_vscplink_get_handler(httpd_req_t *req)
   sprintf(buf, "Password:<input type=\"text\" name=\"password\" value=\"%s\" >", g_persistent.vscplinkPassword);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  const char *pmkstr = malloc(65);
+  char *pmkstr = malloc(65);
   for (int i = 0; i < 32; i++) {
     sprintf(pmkstr + 2 * i, "%02X", g_persistent.vscpLinkKey[i]);
   }
@@ -2075,9 +2075,9 @@ do_config_vscplink_get_handler(httpd_req_t *req)
 static esp_err_t
 config_mqtt_get_handler(httpd_req_t *req)
 {
-  esp_err_t rv;
+  //esp_err_t rv;
   char *buf;
-  char *temp;
+  //char *temp;
 
   char *req_buf;
   size_t req_buf_len;
@@ -2300,9 +2300,9 @@ do_config_mqtt_get_handler(httpd_req_t *req)
 static esp_err_t
 config_web_get_handler(httpd_req_t *req)
 {
-  esp_err_t rv;
+  //esp_err_t rv;
   char *buf;
-  char *temp;
+  //char *temp;
 
   char *req_buf;
   size_t req_buf_len;
@@ -2449,9 +2449,9 @@ do_config_web_get_handler(httpd_req_t *req)
 static esp_err_t
 config_log_get_handler(httpd_req_t *req)
 {
-  esp_err_t rv;
+  //esp_err_t rv;
   char *buf;
-  char *temp;
+  //char *temp;
 
   char *req_buf;
   size_t req_buf_len;
@@ -3128,7 +3128,7 @@ default_get_handler(httpd_req_t *req)
   // If name has trailing '/', respond with directory contents
   if (0 == strcmp(req->uri, "/")) {
     ESP_LOGI(TAG, "Set default uri");
-    strcpy(req->uri, "/index.html");
+    strcpy((char *)req->uri, "/index.html");
   }
 
   const char *filename = get_path_from_uri(filepath, "/spiffs", req->uri, sizeof(filepath));

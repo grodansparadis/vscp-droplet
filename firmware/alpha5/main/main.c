@@ -1726,7 +1726,7 @@ app_main(void)
       break;
 
     case ALPHA_LOG_UDP:
-      ESP_ERROR_CHECK(udp_logging_init(g_persistent.logUrl, g_persistent.logPort, g_persistent.logwrite2Stdout));
+      //ESP_ERROR_CHECK(udp_logging_init(g_persistent.logUrl, g_persistent.logPort, g_persistent.logwrite2Stdout));
       break;
 
     case ALPHA_LOG_TCP:

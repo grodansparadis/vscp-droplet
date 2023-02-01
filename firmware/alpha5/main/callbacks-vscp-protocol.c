@@ -8,7 +8,7 @@
  *
  * The MIT License (MIT)
  *
- * Copyright (c) 2000-2022 Ake Hedman, Grodans Paradis AB <info@grodansparadis.com>
+ * Copyright (c) 2000-2023 Ake Hedman, Grodans Paradis AB <info@grodansparadis.com>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -34,7 +34,6 @@
  * ******************************************************************************
  */
 
-
 #include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -50,32 +49,25 @@
 #include "tcpsrv.h"
 #include "main.h"
 
-
-
 // Defines from demo.c
 
-//extern wiz_NetInfo net_info;
-extern uint8_t device_guid[16];
-//extern vscp_fifo_t fifoEventsIn;
-extern vscpctx_t ctx[MAX_TCP_CONNECTIONS];
-extern struct _eeprom_ eeprom;
-
-
+extern node_persistent_config_t g_persistent;
+extern QueueHandle_t g_queueDroplet; // Received events
+extern vscpctx_t g_ctx[MAX_TCP_CONNECTIONS];
 
 // ****************************************************************************
 //                        VSCP protocol callbacks
 // ****************************************************************************
 
-
-
 /*!
-  @fn vscp2_callback_get_ms
+  @fn vscp2_protocol_callback_get_ms
   @brief Get the time in milliseconds.
   @param pdata Pointer to user data.
   @param ptime Pointer to unsigned integer that will get the time in milliseconds.
   @return True if handled.
 */
-int vscp2_callback_get_ms(const void* pdata, uint32_t *ptime)
+int
+vscp2_protocol_callback_get_ms(const void *pdata, uint32_t *ptime)
 {
   if ((NULL == pdata) || (NULL == ptime)) {
     return VSCP_ERROR_INVALID_POINTER;
@@ -92,37 +84,37 @@ int vscp2_callback_get_ms(const void* pdata, uint32_t *ptime)
  * @return 0 on success.
  */
 
-const uint8_t* 
-vscp2_callback_get_guid(const void* pdata)
+const uint8_t *
+vscp2_protocol_callback_get_guid(const void *pdata)
 {
-  return device_guid;
+  return g_persistent.nodeGuid;
 }
 
 #ifdef THIS_FIRMWARE_ENABLE_WRITE_2PROTECTED_LOCATIONS
 
 int
-vscp2_callback_write_manufacturer_id(const void* pdata, uint8_t pos, uint8_t val)
+vscp2_protocol_callback_write_manufacturer_id(const void *pdata, uint8_t pos, uint8_t val)
 {
   if (pos < 4) {
-    //eeprom_write(&eeprom, VSCP2_STD_REG_MANUFACTURER_ID0 + pos, val);
+    // eeprom_write(&eeprom, VSCP2_STD_REG_MANUFACTURER_ID0 + pos, val);
   }
   else if (pos < 8) {
-    //eeprom_write(&eeprom, VSCP2_STD_REG_MANUFACTURER_SUBID0 + pos - 4, val);
+    // eeprom_write(&eeprom, VSCP2_STD_REG_MANUFACTURER_SUBID0 + pos - 4, val);
   }
 
   // Commit changes to 'eeprom'
-  //eeprom_commit(&eeprom);
+  // eeprom_commit(&eeprom);
 
   return VSCP_ERROR_SUCCESS;
 }
 
 int
-vscp2_callback_write_guid(const void *pdata, uint8_t pos, uint8_t val)
+vscp2_protocol_callback_write_guid(const void *pdata, uint8_t pos, uint8_t val)
 {
-  //eeprom_write(&eeprom, VSCP2_STD_REG_GUID0 + pos, val);
-  
+  // eeprom_write(&eeprom, VSCP2_STD_REG_GUID0 + pos, val);
+
   // Commit changes to 'eeprom'
-  //eeprom_commit(&eeprom);
+  // eeprom_commit(&eeprom);
 
   return VSCP_ERROR_SUCCESS;
 }
@@ -130,17 +122,17 @@ vscp2_callback_write_guid(const void *pdata, uint8_t pos, uint8_t val)
 #endif
 
 /**
- * @fn vscp2_callback_read_user_reg
+ * @fn vscp2_protocol_callback_read_user_reg
  * @brief Read user register callback
- * 
- * @param pdata Pointer to context. 
- * @param reg 
- * @param pval 
- * @return VSCP_ERROR_SUCCESS on success, error code on failure 
+ *
+ * @param pdata Pointer to context.
+ * @param reg
+ * @param pval
+ * @return VSCP_ERROR_SUCCESS on success, error code on failure
  */
 
 int
-vscp2_callback_read_user_reg(const void* pdata, uint32_t reg, uint8_t* pval)
+vscp2_protocol_callback_read_user_reg(const void *pdata, uint32_t reg, uint8_t *pval)
 {
   // Check pointers (pdata allowed to be NULL)
   if (NULL == pval) {
@@ -239,17 +231,17 @@ vscp2_callback_read_user_reg(const void* pdata, uint32_t reg, uint8_t* pval)
 }
 
 /**
- * @fn vscp2_callback_write_user_reg
+ * @fn vscp2_protocol_callback_write_user_reg
  * @brief Write application register
- * 
- * @param pdata Pointer to context. 
+ *
+ * @param pdata Pointer to context.
  * @param reg Register to write.
  * @param val Value to write.
  * @return VSCP_ERROR_SUCCESS on success, error code on failure
  */
 
 int
-vscp2_callback_write_user_reg(const void* pdata, uint32_t reg, uint8_t val)
+vscp2_protocol_callback_write_user_reg(const void *pdata, uint32_t reg, uint8_t val)
 {
   // if ( REG_DEVICE_ZONE == reg) {
   //   eeprom_write(&eeprom, REG_DEVICE_ZONE, val);
@@ -257,9 +249,9 @@ vscp2_callback_write_user_reg(const void* pdata, uint32_t reg, uint8_t val)
   // else if ( REG_DEVICE_SUBZONE == reg) {
   //   eeprom_write(&eeprom, REG_DEVICE_SUBZONE, val);
   // }
-  // else if ( REG_LED_CTRL == reg) { 
+  // else if ( REG_LED_CTRL == reg) {
   //   eeprom_write(&eeprom, REG_LED_CTRL, val);
-    
+
   // }
   // else if ( REG_LED_STATUS == reg) {
   //   if (val) {
@@ -279,7 +271,7 @@ vscp2_callback_write_user_reg(const void* pdata, uint32_t reg, uint8_t val)
   //   eeprom_write(&eeprom, REG_IO_CTRL2, val);
   // }
   // else if ( REG_IO_STATUS == reg) {
-    
+
   // }
   // else if ( REG_TEMP_CTRL == reg) {
   //   eeprom_write(&eeprom, REG_TEMP_CTRL, val);
@@ -307,11 +299,10 @@ vscp2_callback_write_user_reg(const void* pdata, uint32_t reg, uint8_t val)
   // }
 
   // Commit changes to 'eeprom'
-  //eeprom_commit(&eeprom);
+  // eeprom_commit(&eeprom);
 
   return VSCP_ERROR_SUCCESS;
 }
-
 
 /**
  * @brief Enter bootloader
@@ -320,7 +311,7 @@ vscp2_callback_write_user_reg(const void* pdata, uint32_t reg, uint8_t val)
  */
 
 int
-vscp2_callback_enter_bootloader(const void* pdata)
+vscp2_protocol_callback_enter_bootloader(const void *pdata)
 {
   return VSCP_ERROR_SUCCESS;
 }
@@ -332,7 +323,7 @@ vscp2_callback_enter_bootloader(const void* pdata)
  */
 
 int
-vscp2_callback_report_dmatrix(const void* pdata)
+vscp2_protocol_callback_report_dmatrix(const void *pdata)
 {
   return VSCP_ERROR_SUCCESS;
 }
@@ -344,7 +335,7 @@ vscp2_callback_report_dmatrix(const void* pdata)
  */
 
 int
-vscp2_callback_report_mdf(const void* pdata)
+vscp2_protocol_callback_report_mdf(const void *pdata)
 {
   return VSCP_ERROR_SUCCESS;
 }
@@ -356,7 +347,7 @@ vscp2_callback_report_mdf(const void* pdata)
  */
 
 int
-vscp2_callback_report_events_of_interest(const void* pdata)
+vscp2_protocol_callback_report_events_of_interest(const void *pdata)
 {
   return VSCP_ERROR_SUCCESS;
 }
@@ -368,20 +359,20 @@ vscp2_callback_report_events_of_interest(const void* pdata)
  */
 
 uint32_t
-vscp2_callback_get_timestamp(const void* pdata)
+vscp2_protocol_callback_get_timestamp(const void *pdata)
 {
-  return 0; //time_us_32();
+  return 0; // time_us_32();
 }
 
 /**
  * @brief  Set VSCP event time
  * @param pdata Pointer to context.
- * @param pex Pointer to event.
+ * @param pev Pointer to event.
  * @return VSCP_ERROR_SUCCESS on success, error code on failure
  */
 
 int
-vscp2_callback_get_time(const void* pdata, const vscpEventEx *pex)
+vscp2_protocol_callback_get_time(const void *pdata, const vscpEvent *pev)
 {
   return VSCP_ERROR_SUCCESS;
 }
@@ -389,115 +380,105 @@ vscp2_callback_get_time(const void* pdata, const vscpEventEx *pex)
 /**
  * @brief Get timestamp in milliseconds
  * @param pdata Pointer to context.
- * @param pex Event to send
+ * @param pev Event to send
  * @return VSCP_ERROR_SUCCESS on success, error code on failure
  */
 
 int
-vscp2_callback_send_eventEx(const void* pdata, vscpEventEx* pex)
+vscp2_protocol_callback_send_event(const void *pdata, vscpEvent *pev)
 {
-  for (int i = 0; i < MAX_TCP_CONNECTIONS; i++) {
+  vscpctx_t *pctx = (vscpctx_t *) pdata;
+  if (NULL == pctx) {
+    return VSCP_ERROR_INVALID_POINTER;
+  }
 
-    // Only if user is validated
-    if (ctx[i].bValidated) {  
-      // vscpEvent *pnew = vscp_fwhlp_mkEventCopy(pex);
-      // if (NULL == pnew) {
-      //   return VSCP_ERROR_MEMORY;
-      // }
-      // else {
-      //   pnew->obid = 0xffffffff; // The device
-      //   if (vscp_fifo_write(&ctx[i].fifoEventsOut, pnew)) {
-      //     printf("Written to fifo\n");
-      //   }
-      //   else {
-      //     printf("Failed to write to fifo\n");
-      //     vscp_fwhlp_deleteEvent(&pnew);      
-      //   }
-      // }
+  // Only if user is validated
+  if (pctx->bValidated) {
+    pev->obid = pctx->sock;
+    if (pdTRUE != xQueueSend(g_queueDroplet, (void *) &pev, 0)) {
+      vscp_fwhlp_deleteEvent(&pev);
+      pctx->statistics.cntOverruns++;
     }
   }
 
-  // Remove original event
-  //vscp_fwhlp_deleteEvent(&pex);
-  
   return VSCP_ERROR_SUCCESS;
 }
 
 /**
- * @brief 
- * 
+ * @brief
+ *
  * @param pdata Pointer to context.
- * @return VSCP_ERROR_SUCCESS on success, error code on failure 
+ * @return VSCP_ERROR_SUCCESS on success, error code on failure
  */
 
 int
-vscp2_callback_restore_defaults(const void *pdata)
+vscp2_protocol_callback_restore_defaults(const void *pdata)
 {
   return VSCP_ERROR_SUCCESS;
 }
 
 /**
- * @brief 
- * 
- * @param pdata Pointer to context. 
- * @param pos 
- * @param val 
- * @return VSCP_ERROR_SUCCESS on success, error code on failure 
+ * @brief
+ *
+ * @param pdata Pointer to context.
+ * @param pos
+ * @param val
+ * @return VSCP_ERROR_SUCCESS on success, error code on failure
  */
 
 int
-vscp2_callback_write_user_id(const void *pdata, uint8_t pos, uint8_t val)
+vscp2_protocol_callback_write_user_id(const void *pdata, uint8_t pos, uint8_t val)
 {
-  //eeprom_write(&eeprom, VSCP2_STD_REG_USER_ID0 + pos, val);
+  // eeprom_write(&eeprom, VSCP2_STD_REG_USER_ID0 + pos, val);
 
   // Commit changes to 'eeprom'
-  //eeprom_commit(&eeprom);
-  
+  // eeprom_commit(&eeprom);
+
   return VSCP_ERROR_SUCCESS;
 }
 
 /**
  * @brief Return ipv6 or ipv4 address
- * 
+ *
  * Return the ipv6 or ipv4 address of the interface. If the
  * interface is not tcp/ip based just return a positive
  * response or a valid address for the underlying transport protocol.
- * 
+ *
  * The address is always sixteen bytes long.
- * 
- * @param pdata Pointer to context. 
+ *
+ * @param pdata Pointer to context.
  * @param pipaddr Pointer to 16 byte address space for (ipv6 or ipv4) address
- *                return value. 
- * @return VSCP_ERROR_SUCCESS on success, error code on failure 
+ *                return value.
+ * @return VSCP_ERROR_SUCCESS on success, error code on failure
  */
 
 int
-vscp2_callback_get_ip_addr(const void *pUserData, uint8_t *pipaddr)
+vscp2_protocol_callback_get_ip_addr(const void *pUserData, uint8_t *pipaddr)
 {
   if (NULL == pipaddr) {
     return VSCP_ERROR_PARAMETER;
   }
   else {
-    //memcpy(pipaddr, net_info.ip, 4);
+    // memcpy(pipaddr, net_info.ip, 4);
   }
-  
+
   return VSCP_ERROR_SUCCESS;
 }
 
 /**
  * @brief High end server response
- * 
+ *
  * Event received after a high end server request. This
- * request can have been sent from this device or some 
+ * request can have been sent from this device or some
  * other device.
- * 
- * @param pdata Pointer to context. 
- * @return VSCP_ERROR_SUCCESS on success, error code on failure 
+ *
+ * @param pdata Pointer to context.
+ * @return VSCP_ERROR_SUCCESS on success, error code on failure
  */
 
 #ifdef THIS_FIRMWARE_VSCP_DISCOVER_SERVER
 int
-vscp2_callback_high_end_server_response(const void *pUserData)
+vscp2_protocol_callback_high_end_server_response(const void *pUserData)
 {
   return VSCP_ERROR_SUCCESS;
 }

@@ -1111,7 +1111,7 @@ droplet_parse_vscp_json(const char *jsonVscpEventObj, vscpEventEx *pex)
 int
 droplet_create_vscp_json(char *strObj, vscpEventEx *pex)
 {
-  int rv;
+  //int rv;
   char str[80];
   cJSON *root = cJSON_CreateObject();
 
