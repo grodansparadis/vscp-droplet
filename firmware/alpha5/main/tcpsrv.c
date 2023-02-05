@@ -225,30 +225,30 @@ client_task(void *pvParameters)
       pctx->size += len;
       pctx->buf[pctx->size + 1] = 0;
 
-      printf("pre len %d %d\n", len, pctx->size);
+      //printf("pre len %d %d\n", len, pctx->size);
 
       // Parse VSCP command
       char *pnext = NULL;
       if (VSCP_ERROR_SUCCESS == vscp_link_parser(pctx, pctx->buf, &pnext)) {
-        //printf("Return\n");
+        // printf("Return\n");
         if ((NULL != pnext) && *pnext) {
-          //printf("Copy [%s]\n", pnext);
+          // printf("Copy [%s]\n", pnext);
           strncpy(pctx->buf, pnext, sizeof(pctx->buf));
           pctx->size = strlen(pctx->buf);
         }
         else {
-          //printf("Zero\n");
+          // printf("Zero\n");
           memset(pctx->buf, 0, sizeof(pctx->buf));
           pctx->size = 0;
         }
       }
       else if (1 <= (sizeof(pctx->buf) - pctx->size)) {
-        //printf("Full buffer without crlf\n");
+        // printf("Full buffer without crlf\n");
         *pctx->buf = 0;
         pctx->size = 0;
       }
 
-      //printf("post len %d\n", pctx->size);
+      // printf("post len %d\n", pctx->size);
 
       // If socket gets closed ("quit" command)
       // pctx->sock is zero
@@ -259,8 +259,14 @@ client_task(void *pvParameters)
       // Get event from out fifo to feed to
       // protocol handler etc
       vscpEvent *pev = NULL;
-      if ( pdTRUE != xQueueReceive(pctx->queueClient, &pev, 0)) {
-        pev = NULL;
+      if (pdTRUE == xSemaphoreTake(pctx->mutexQueue, (TickType_t) 10) ) {
+        if (pdTRUE != xQueueReceive(pctx->queueClient, &pev, 0)) {
+          pev = NULL;
+        }
+        xSemaphoreGive(pctx->mutexQueue);
+      }
+      else {
+        ESP_LOGW(TAG, "Unable to get mutex for client queue for client %d", pctx->id);
       }
 
       // pev is NULL if no event is available here
@@ -322,10 +328,16 @@ tcpsrv_task(void *pvParameters)
   g_queueDroplet = xQueueCreate(DROPLET_QUEUE_SIZE, sizeof(pev));
 
   for (int i = 0; i < MAX_TCP_CONNECTIONS; i++) {
-    g_ctx[i].id          = i;
-    g_ctx[i].sock        = 0;
+    g_ctx[i].id         = i;
+    g_ctx[i].sock       = 0;
     g_ctx[i].mutexQueue = xSemaphoreCreateMutex();
+    if (NULL == g_ctx[i].mutexQueue) {
+      ESP_LOGE(TAG, "Failed to create mutex for client queue for client %d", i);
+    }
     g_ctx[i].queueClient = xQueueCreate(CLIENT_QUEUE_SIZE, sizeof(pev));
+    if (NULL == g_ctx[i].queueClient) {
+      ESP_LOGE(TAG, "Failed to create client queue for client %d", i);
+    }
     setContextDefaults(&g_ctx[i]);
   }
 

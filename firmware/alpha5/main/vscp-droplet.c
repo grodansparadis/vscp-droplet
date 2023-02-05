@@ -38,6 +38,7 @@
  * ******************************************************************************
  */
 
+#include "vscp-compiler.h"
 #include "vscp-projdefs.h"
 
 #include <stdlib.h>
@@ -72,29 +73,28 @@
 #define DROPLET_MSG_CACHE_SIZE       32
 #define DROPLET_DISCOVERY_CACHE_SIZE 64
 
+static const char *TAG = "droplet";
 
+bool g_set_channel_flag           = true;
+droplet_config_t g_droplet_config = { 0 };
 
-static const char *TAG                   = "vscp_droplet_alpha";
-static bool g_set_channel_flag           = true;
-static droplet_config_t g_droplet_config = { 0 };
-
-static wifi_country_t g_self_country = { 0 };
+wifi_country_t g_self_country = { 0 };
 
 #define DROPLET_MAX_BUFFERED_NUM                                                                                       \
   (CONFIG_ESP32_WIFI_DYNAMIC_TX_BUFFER_NUM / 2) /* Not more than CONFIG_ESP32_WIFI_DYNAMIC_TX_BUFFER_NUM */
 
 // This mutex protects the espnow_send as it is NOT thread safe
-static SemaphoreHandle_t s_droplet_send_lock;
+SemaphoreHandle_t g_droplet_send_lock;
 
 // Free running counter that is updated for every send
-static uint8_t g_droplet_sendSequence = 0;
+uint8_t g_droplet_sendSequence = 0;
 
-static EventGroupHandle_t g_droplet_event_group = NULL;
+EventGroupHandle_t g_droplet_event_group = NULL;
 
 // Number of send events in transit
-static uint32_t g_droplet_buffered_num = 0;
+uint32_t g_droplet_buffered_num = 0;
 
-static QueueHandle_t g_droplet_queue = NULL;
+QueueHandle_t g_droplet_rcvqueue = NULL;
 
 #define DROPLET_SEND_CB_OK   BIT0
 #define DROPLET_SEND_CB_FAIL BIT1
@@ -116,9 +116,9 @@ static struct {
 /**
  * @brief Receive data packet temporarily store in queue
  */
-typedef struct {
+typedef struct __droplet_rxpkt {
   wifi_pkt_rx_ctrl_t rx_ctrl; /**< metadata header */
-  uint8_t dest_addr[6];
+  // uint8_t dest_addr[6]; // Available in payload
   uint8_t src_addr[6];
   uint8_t size;
   uint8_t payload[0];
@@ -185,13 +185,15 @@ droplet_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len);
 esp_err_t
 droplet_init(const droplet_config_t *config)
 {
+  void *p;
   // esp_err_t ret = ESP_FAIL;
 
   // ESP_ERROR_CHECK(config);
   memcpy(&g_droplet_config, config, sizeof(droplet_config_t));
 
-  g_droplet_queue = xQueueCreate(g_droplet_config.sizeQueue, sizeof(droplet_rxpkt_t *));
-  if (!g_droplet_queue) {
+  ESP_LOGI(TAG, "Ptr size %d", sizeof(void *));
+  g_droplet_rcvqueue = xQueueCreate(g_droplet_config.sizeQueue, sizeof(void *));
+  if (!g_droplet_rcvqueue) {
     ESP_LOGD(TAG, "Create droplet event queue fail");
     return ESP_FAIL;
   }
@@ -200,8 +202,8 @@ droplet_init(const droplet_config_t *config)
   g_droplet_event_group = xEventGroupCreate();
   ESP_RETURN_ON_ERROR(!g_droplet_event_group, TAG, "Create event group fail");
 
-  s_droplet_send_lock = xSemaphoreCreateMutex();
-  ESP_RETURN_ON_ERROR(!s_droplet_send_lock, TAG, "Create send semaphore mutex fail");
+  g_droplet_send_lock = xSemaphoreCreateMutex();
+  ESP_RETURN_ON_ERROR(!g_droplet_send_lock, TAG, "Create send semaphore mutex fail");
 
   // Initialize DROPLET function
   ESP_ERROR_CHECK(esp_now_init());
@@ -217,7 +219,7 @@ droplet_init(const droplet_config_t *config)
   ESP_LOGD(TAG, "mac: " MACSTR ", version: %d", MAC2STR(DROPLET_ADDR_SELF), DROPLET_VERSION);
 
   // Add broadcast peer information to peer list.
-  esp_now_peer_info_t *peer = malloc(sizeof(esp_now_peer_info_t));
+  esp_now_peer_info_t *peer = VSCP_MALLOC(sizeof(esp_now_peer_info_t));
   if (NULL == peer) {
     ESP_LOGE(TAG, "Malloc peer information fail");
     // vSemaphoreDelete(s_vscp_droplet_event_queue);
@@ -230,12 +232,12 @@ droplet_init(const droplet_config_t *config)
   peer->encrypt = false;
   memcpy(peer->peer_addr, DROPLET_ADDR_BROADCAST, ESP_NOW_ETH_ALEN);
   ESP_ERROR_CHECK(esp_now_add_peer(peer));
-  free(peer);
+  VSCP_FREE(peer);
 
   // Init droplet system
   droplet_sec_init();
 
-  xTaskCreate(droplet_task, "droplet tast", 4096, NULL, 5, NULL);
+  xTaskCreate(droplet_task, "droplet task", 4096, NULL, 5, NULL);
 
   return ESP_OK;
 }
@@ -247,17 +249,26 @@ droplet_init(const droplet_config_t *config)
 static void
 droplet_task(void *arg)
 {
-  esp_err_t ret            = ESP_FAIL;
+  esp_err_t ret              = ESP_FAIL;
   droplet_rxpkt_t *prxdata = NULL;
-  bool bRun                = true;
-  size_t size              = 0;
+  bool bRun                  = true;
+  size_t size                = 0;
 
   ESP_LOGI(TAG, "droplet task entry");
 
   while (bRun) {
 
-    if (xQueueReceive(g_droplet_queue, &(prxdata), portMAX_DELAY) != pdTRUE) {
-      ESP_LOGE(TAG, "Failed to get receive data from queue");
+
+NEXTFRAME:
+
+    // Get receive frame (if any)
+    if ((ret = xQueueReceive(g_droplet_rcvqueue, &prxdata, portMAX_DELAY)) != pdTRUE) {
+      ESP_LOGE(TAG, "Failed to get receive data from queue. ret=%d", ret);
+      continue;
+    }
+
+    if (prxdata == NULL) {
+      ESP_LOGE(TAG, "Receive event data is NULL");
       continue;
     }
 
@@ -269,43 +280,52 @@ droplet_task(void *arg)
 
     size = prxdata->size;
 
-    if (prxdata == NULL) {
-      ESP_LOGE(TAG, "Receive event data is NULL");
-      continue;
-    }
-
-    // Allocate space for data
-    uint8_t *pdata = malloc(prxdata->size);
-
     // * * * Decrypt frame if needed * * *
 
-    if (prxdata->payload[DROPLET_POS_PKTID] == VSCP_ENCRYPTION_AES128) {
+    if (prxdata->payload[DROPLET_POS_PKTID] & 0x0f) {
+
+      ESP_LOGI(TAG, "<------ Decryption -------->");
+
+      uint8_t nEncryption = prxdata->payload[DROPLET_POS_PKTID] & 0x0f;
+
+      // Allocate space for data
+      uint8_t *pdata = VSCP_MALLOC(prxdata->size);
+      if (NULL == pdata) {
+        VSCP_FREE(prxdata);
+        ESP_LOGE(TAG, "Unable to allocate data. Terminating");
+        return;
+      }
 
       if (VSCP_ERROR_SUCCESS != vscp_fwhlp_decryptFrame(pdata,
                                                         prxdata->payload,
                                                         prxdata->size,
                                                         g_droplet_config.pmk, // key
                                                         NULL,                 // IV  - use embedded
-                                                        VSCP_ENCRYPTION_FROM_TYPE_BYTE)) {
+                                                        nEncryption)) {
         ESP_LOGE(TAG, "Failed to decrypt frame");
-        free(pdata);
-        free(prxdata);
+        VSCP_FREE(pdata);
+        VSCP_FREE(prxdata);
         continue;
       }
 
       size -= 16; // no need to send the old IV
-      memcpy(prxdata->payload, pdata, size);
-    }
 
-    free(pdata);
+      // Copy back decrypted payload data
+      memcpy(prxdata->payload, pdata, size);
+
+      VSCP_FREE(*pdata);
+    }
 
     // Check if we have already received this frame
     for (size_t i = 0, index = g_droplet_magic_cache_next; i < DROPLET_MSG_CACHE_SIZE;
          i++, index          = (g_droplet_magic_cache_next + i) % DROPLET_MSG_CACHE_SIZE) {
-      if (g_droplet_magic_cache[index].magic == prxdata->payload[DROPLET_POS_MAGIC]) {
-        ESP_LOGI(TAG, "Frame is already in cache");
-        free(prxdata);
-        continue;
+      if (g_droplet_magic_cache[index].magic ==
+          ((prxdata->payload[DROPLET_POS_MAGIC] << 8) + prxdata->payload[DROPLET_POS_MAGIC + 1])) {
+        ESP_LOGI(TAG,
+                 "Frame %X is skipped - already in cache, ",
+                 ((prxdata->payload[DROPLET_POS_MAGIC] << 8) + prxdata->payload[DROPLET_POS_MAGIC + 1]));
+        VSCP_FREE(prxdata);
+        goto NEXTFRAME;
       }
     }
 
@@ -314,7 +334,8 @@ droplet_task(void *arg)
       (prxdata->payload[DROPLET_POS_MAGIC] << 8) + prxdata->payload[DROPLET_POS_MAGIC + 1];
     g_droplet_magic_cache_next = (g_droplet_magic_cache_next + 1) % DROPLET_MSG_CACHE_SIZE;
 
-    uint8_t ttl                       = --prxdata->payload[DROPLET_POS_TTL];
+    // decrease ttl as we have seen this frame
+    uint8_t ttl                           = --prxdata->payload[DROPLET_POS_TTL];
     prxdata->payload[DROPLET_POS_TTL] = ttl;
 
     // Destination address can't be a pointer as it will be encrypted if
@@ -323,8 +344,13 @@ droplet_task(void *arg)
     memcpy(dest_addr, prxdata->payload + DROPLET_POS_DEST_ADDR, 6);
 
     // if ttl is zero or frame is addressed to us don't forward
-    if (g_droplet_config.bForwardEnable && ttl /*&& DROPLET_ADDR_IS_SELF(prxdata->payload[DROPLET_POS_DEST_ADDR])*/) {
-      if (ESP_OK == (ret = droplet_send(dest_addr, true, false, 0, prxdata->payload, size, 20))) {
+    if (g_droplet_config.bForwardEnable &&
+        ttl /*&& DROPLET_ADDR_IS_SELF(prxdata->payload[DROPLET_POS_DEST_ADDR])*/) {
+      ESP_LOGI(TAG,
+               "Forward frame %X",
+               ((prxdata->payload[DROPLET_POS_MAGIC] << 8) + prxdata->payload[DROPLET_POS_MAGIC + 1]));
+      if (ESP_OK == (ret = droplet_send(dest_addr, true, VSCP_ENCRYPTION_NONE, 0, prxdata->payload, size, 20))) {
+        ESP_LOGI(TAG, "Frame forwarded successfully");
         g_droppletStats.nForw++; // Update forward frame statistics
       }
       else {
@@ -339,19 +365,91 @@ droplet_task(void *arg)
       g_vscp_event_handler_cb(&ex, NULL);
     }
 
-    free(prxdata);
+    VSCP_FREE(prxdata); // Deallocate structure data
+
+    ESP_LOGI(TAG, "Received frame deleted");
+
   } // while
 
   // Empty queue
-  while (xQueueReceive(g_droplet_queue, &(prxdata), 0)) {
-    free(prxdata);
+  while (xQueueReceive(g_droplet_rcvqueue, &prxdata, 0)) {
+    VSCP_FREE((prxdata)); // Deallocate structure data
   }
 
-  vQueueDelete(g_droplet_queue);
-  g_droplet_queue = NULL;
+  vQueueDelete(g_droplet_rcvqueue);
+  g_droplet_rcvqueue = NULL;
 
   ESP_LOGI(TAG, "main task exit");
   vTaskDelete(NULL);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// droplet_recv_cb
+//
+
+static void
+droplet_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
+{
+  if (mac_addr == NULL || data == NULL || len <= 0) {
+    ESP_LOGE(TAG, "Receive cb arg error");
+    return;
+  }
+
+  // Check that frame length is within limits
+  if ((len < DROPLET_MIN_FRAME) || (len > DROPLET_MAX_FRAME) || (data[0] > VSCP_ENCRYPTION_AES256)) {
+    ESP_LOGE(TAG, "Frame length is invalid len=%d", len);
+    g_droppletStats.nRecvFrameFault++; // Increase receive frame faults
+    return;
+  }
+
+  // uint8_t *droplet_data = (uint8_t *) data;
+  wifi_promiscuous_pkt_t *promiscuous_pkt = (wifi_promiscuous_pkt_t *) (data - sizeof(wifi_pkt_rx_ctrl_t));
+  wifi_pkt_rx_ctrl_t *prx_ctrl            = &promiscuous_pkt->rx_ctrl;
+
+  ESP_LOGI(TAG,
+           "Receive event from " MACSTR " frame %X, RSSI %d",
+           MAC2STR(mac_addr),
+           ((data[DROPLET_POS_MAGIC] << 8) + data[DROPLET_POS_MAGIC + 1]),
+           prx_ctrl->rssi);
+  ESP_LOG_BUFFER_HEXDUMP(TAG, data, len, ESP_LOG_INFO);
+
+  // Channel filtering
+  if (g_droplet_config.bFilterAdjacentChannel && g_droplet_config.channel != prx_ctrl->channel) {
+    ESP_LOGD(TAG, "Filter adjacent channels, %d != %d", g_droplet_config.channel, prx_ctrl->channel);
+    g_droppletStats.nRecvAdjChFilter++; // Increase adjacent channel filter stats
+    return;
+  }
+
+  // RSSI filtering
+  if (g_droplet_config.filterWeakSignal && g_droplet_config.filterWeakSignal > prx_ctrl->rssi) {
+    ESP_LOGD(TAG, "Filter weak signal strength, %d > %d", g_droplet_config.filterWeakSignal, prx_ctrl->rssi);
+    g_droppletStats.nRecvŔssiFilter++; // Increase RSSI filter stats
+    return;
+  }
+
+
+  droplet_rxpkt_t *q_data = VSCP_MALLOC(sizeof(droplet_rxpkt_t) + len);
+  if (NULL == q_data) {
+    ESP_LOGD(TAG, "Failed to allocate data.");
+    return;
+  }
+
+  memcpy(&q_data->rx_ctrl, prx_ctrl, sizeof(wifi_pkt_rx_ctrl_t));
+  memcpy(&q_data->payload, data, len);
+  q_data->size = len;
+  memcpy(q_data->src_addr, mac_addr, 6);
+
+  // If a specific channel set, make rx data using it
+  if (g_droplet_config.channel && g_droplet_config.channel != DROPLET_CHANNEL_ALL) {
+    q_data->rx_ctrl.channel = g_droplet_config.channel;
+  }
+
+  if (xQueueSend(g_droplet_rcvqueue, &(q_data), 0) != pdPASS) {
+    ESP_LOGW(TAG, "[%s, %d] Send event queue failed. errQUEUE_FULL", __func__, __LINE__);
+    VSCP_FREE(q_data);
+    g_droppletStats.nRecvOverruns++; // Receive overrun
+    return;
+  }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -385,81 +483,17 @@ droplet_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// droplet_recv_cb
-//
-
-static void
-droplet_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
-{
-  if (mac_addr == NULL || data == NULL || len <= 0) {
-    ESP_LOGE(TAG, "Receive cb arg error");
-    return;
-  }
-
-  // Check that frame length is within limits
-  if ((len < DROPLET_MIN_FRAME) || (len > DROPLET_MAX_FRAME) || (data[0] > VSCP_ENCRYPTION_AES256)) {
-    ESP_LOGE(TAG, "Frame length is invalid len=%d", len);
-    g_droppletStats.nRecvFrameFault++; // Increase receive frame faults
-    return;
-  }
-
-  // uint8_t *droplet_data = (uint8_t *) data;
-  wifi_promiscuous_pkt_t *promiscuous_pkt = (wifi_promiscuous_pkt_t *) (data - sizeof(wifi_pkt_rx_ctrl_t));
-  wifi_pkt_rx_ctrl_t *rx_ctrl             = &promiscuous_pkt->rx_ctrl;
-
-  // ESP_LOG_BUFFER_HEXDUMP(TAG, data, len, ESP_LOG_INFO);
-
-  // Channel filtering
-  if (g_droplet_config.bFilterAdjacentChannel && g_droplet_config.channel != rx_ctrl->channel) {
-    ESP_LOGD(TAG, "Filter adjacent channels, %d != %d", g_droplet_config.channel, rx_ctrl->channel);
-    g_droppletStats.nRecvAdjChFilter++; // Incrice adjacent channel filter stats
-    return;
-  }
-
-  // RSSI filtering
-  if (g_droplet_config.filterWeakSignal && g_droplet_config.filterWeakSignal > rx_ctrl->rssi) {
-    ESP_LOGD(TAG, "Filter weak signal strength, %d > %d", g_droplet_config.filterWeakSignal, rx_ctrl->rssi);
-    g_droppletStats.nRecvŔssiFilter++; // Increas RSSI filter stats
-    return;
-  }
-
-  droplet_rxpkt_t *q_data = malloc(sizeof(droplet_rxpkt_t) + len);
-  if (NULL == q_data) {
-    ESP_LOGD(TAG, "Failed to allocate data.");
-    return;
-  }
-  // memcpy(&q_data->dest_addr, droplet_data->dest_addr, 6);
-  // memcpy(&q_data->src_addr, droplet_data->src_addr, 6);
-  memcpy(&q_data->rx_ctrl, rx_ctrl, sizeof(wifi_pkt_rx_ctrl_t));
-  memcpy(&q_data->payload, data, len);
-  q_data->size = len;
-  memcpy(q_data->src_addr, mac_addr, 6);
-
-  // If a specific channel set, make rx data using it
-  if (g_droplet_config.channel && g_droplet_config.channel != DROPLET_CHANNEL_ALL) {
-    q_data->rx_ctrl.channel = g_droplet_config.channel;
-  }
-
-  if (xQueueSend(g_droplet_queue, &q_data, 0) != pdPASS) {
-    ESP_LOGW(TAG, "[%s, %d] Send event queue failed. errQUEUE_FULL", __func__, __LINE__);
-    free(q_data);
-    g_droppletStats.nRecvOverruns++; // Receive overrrun
-    return;
-  }
-}
-
-///////////////////////////////////////////////////////////////////////////////
 // droplet_send
 //
 
 esp_err_t
 droplet_send(const uint8_t *dest_addr,
              bool bPreserveHeader,
-             bool bEncrypt,
+             uint8_t nEncrypt,
              uint8_t ttl,
              uint8_t *payload,
              size_t size,
-             TickType_t wait_ticks)
+             uint16_t wait_ms)
 {
   if (NULL == dest_addr) {
     ESP_LOGE(TAG, "destination address pointer invalid");
@@ -476,17 +510,17 @@ droplet_send(const uint8_t *dest_addr,
     return ESP_ERR_INVALID_ARG;
   }
 
-  static uint8_t seq     = 0;
-  esp_err_t ret          = ESP_FAIL;
-  TickType_t write_ticks = 0;
-  uint32_t start_ticks   = xTaskGetTickCount();
-  uint8_t *outbuf        = NULL;
-  bool bBroadcast        = (0 == memcmp(dest_addr, DROPLET_ADDR_BROADCAST, ESP_NOW_ETH_ALEN));
-  size_t frame_len       = size;
+  static uint8_t seq = 0;
+  esp_err_t ret      = ESP_FAIL;
+  // TickType_t write_ticks = 0;
+  uint32_t start_ticks = xTaskGetTickCount();
+  uint8_t *outbuf      = NULL;
+  bool bBroadcast      = (0 == memcmp(dest_addr, DROPLET_ADDR_BROADCAST, ESP_NOW_ETH_ALEN));
+  size_t frame_len     = size;
 
   if (bPreserveHeader) {
     // Let pktid byte decide if we should encrypt or not
-    bEncrypt = payload[DROPLET_POS_PKTID] ? true : false;
+    nEncrypt = payload[DROPLET_POS_PKTID] & 0x0f;
   }
   else {
 
@@ -505,16 +539,16 @@ droplet_send(const uint8_t *dest_addr,
 
   // Encrypt data if needed. IV will be placed at end of data
   // | id | encrypted-data | IV |
-  if (bEncrypt) {
+  if (nEncrypt) {
 
     // Fill in iv at end of send frame
-    uint8_t *iv = malloc(16);
+    uint8_t *iv = VSCP_MALLOC(16);
     esp_fill_random(iv, DROPLET_IV_LEN);
 
     // Encrypt send frame
-    outbuf = malloc(size + (16 - (size % 16) + 16) + 1); // size + padding + iv + coding byte
+    outbuf = VSCP_MALLOC(size + (16 - (size % 16) + 16) + 1); // size + padding + iv + coding byte
 
-    payload[DROPLET_POS_PKTID] = VSCP_ENCRYPTION_AES128;
+    payload[DROPLET_POS_PKTID] = nEncrypt;
 
     // uint64_t start = esp_timer_get_time();
     if (0 == (frame_len = vscp_fwhlp_encryptFrame(outbuf,
@@ -522,10 +556,10 @@ droplet_send(const uint8_t *dest_addr,
                                                   size,
                                                   g_droplet_config.pmk, // key
                                                   iv,                   // IV
-                                                  VSCP_ENCRYPTION_AES128))) {
+                                                  nEncrypt))) {
       ESP_LOGE(TAG, "Failed to encrypt frame");
-      free(iv);
-      free(outbuf);
+      VSCP_FREE(iv);
+      VSCP_FREE(outbuf);
       return ESP_FAIL;
     }
     // printf("Encrypt %d %lld\n", size, esp_timer_get_time() - start);
@@ -540,8 +574,8 @@ droplet_send(const uint8_t *dest_addr,
                                                         NULL,                 // IV  - use embedded
                                                         VSCP_ENCRYPTION_FROM_TYPE_BYTE)) {
         ESP_LOGE(TAG, "Failed to decrypt frame");
-        free(outbuf);
-        free(iv);
+        VSCP_FREE(outbuf);
+        VSCP_FREE(iv);
         return ESP_FAIL;
       }
 
@@ -550,15 +584,18 @@ droplet_send(const uint8_t *dest_addr,
   }
   // If not encrypted
   else {
-    outbuf = malloc(size);
+    outbuf = VSCP_MALLOC(size);
+    if (NULL == outbuf) {
+      return ESP_ERR_NO_MEM;
+    }
     memcpy(outbuf, payload, size);
     outbuf[DROPLET_POS_PKTID] = VSCP_ENCRYPTION_NONE;
   }
 
-  /**< Wait for other tasks to be sent before send ESP-NOW data */
-  if (xSemaphoreTake(s_droplet_send_lock, pdMS_TO_TICKS(wait_ticks)) != pdPASS) {
+  // Wait for other tasks to be sent before send ESP-NOW data
+  if (xSemaphoreTake(g_droplet_send_lock, pdMS_TO_TICKS(wait_ms)) != pdPASS) {
     ESP_LOGE(TAG, "Timeout trying to get send lock.");
-    free(outbuf);
+    VSCP_FREE(outbuf);
     g_droppletStats.nSendLock++; // Increase send lock failure counter
     return ESP_ERR_TIMEOUT;
   }
@@ -568,18 +605,15 @@ droplet_send(const uint8_t *dest_addr,
   ret = esp_now_send(dest_addr, outbuf, frame_len);
   if (ret == ESP_OK) {
 
-    write_ticks = (wait_ticks == portMAX_DELAY)                    ? portMAX_DELAY
-                  : xTaskGetTickCount() - start_ticks < wait_ticks ? wait_ticks - (xTaskGetTickCount() - start_ticks)
-                                                                   : 0;
+    // write_ticks = (wait_ticks == portMAX_DELAY)                    ? portMAX_DELAY
+    //               : xTaskGetTickCount() - start_ticks < wait_ticks ? wait_ticks - (xTaskGetTickCount() - start_ticks)
+    //                                                                : 0;
     g_droplet_buffered_num++;
 
     // Wait send cb if no room for frames
     if (g_droplet_buffered_num >= DROPLET_MAX_BUFFERED_NUM) {
-      EventBits_t uxBits = xEventGroupWaitBits(g_droplet_event_group,
-                                               DROPLET_SEND_CB_OK | DROPLET_SEND_CB_FAIL,
-                                               pdTRUE,
-                                               pdFALSE,
-                                               wait_ticks);
+      EventBits_t uxBits =
+        xEventGroupWaitBits(g_droplet_event_group, DROPLET_SEND_CB_OK | DROPLET_SEND_CB_FAIL, pdTRUE, pdFALSE, wait_ms);
       if ((uxBits & DROPLET_SEND_CB_OK) == DROPLET_SEND_CB_OK) {
         ret = ESP_OK;
       }
@@ -594,8 +628,8 @@ droplet_send(const uint8_t *dest_addr,
     ESP_LOGE(TAG, "Failed to send frame err=%X", (int) ret);
   }
 
-  xSemaphoreGive(s_droplet_send_lock);
-  free(outbuf);
+  xSemaphoreGive(g_droplet_send_lock);
+  VSCP_FREE(outbuf);
 
   return ret;
 }
@@ -637,8 +671,8 @@ esp_err_t
 droplet_sec_deinit(void)
 {
   // if (s_vscp_espnow_sec.cipher_ctx) {
-  //   mbedtls_ccm_free((mbedtls_ccm_context *) s_vscp_espnow_sec.cipher_ctx);
-  //   free(s_vscp_espnow_sec.cipher_ctx);
+  //   mbedtls_ccm_VSCP_FREE((mbedtls_ccm_context *) s_vscp_espnow_sec.cipher_ctx);
+  //   VSCP_FREE(s_vscp_espnow_sec.cipher_ctx);
   // }
   // memset(&s_vscp_espnow_sec, 0, sizeof(vscp_espnow_sec_t));
 
@@ -802,7 +836,7 @@ droplet_build_l1_heartbeat(uint8_t *buf, uint8_t len, const uint8_t *pguid)
 
   // Must have room for frame
   if (len < (DROPLET_MIN_FRAME + 3)) {
-    ESP_LOGE(TAG, "Size of byffer is to small to fit event, len:%d", len);
+    ESP_LOGE(TAG, "Size of buffer is to small to fit event, len:%d", len);
     return VSCP_ERROR_PARAMETER;
   }
 
@@ -864,32 +898,116 @@ droplet_build_l2_heartbeat(uint8_t *buf, uint8_t len, const uint8_t *pguid, cons
 
   // Construct VSCP heart beat event
 
-  // Packet id VSCP
-  buf[0] = (VSCP_DEFAULT_TCP_PORT >> 8) & 0xff;
-  buf[1] = VSCP_DEFAULT_TCP_PORT & 0xff;
+  // Unencrypted packet id
+  buf[DROPLET_POS_PKTID] = VSCP_ENCRYPTION_NONE;
 
   // Head
-  buf[2] = 0;
-  buf[3] = 0;
+  buf[DROPLET_POS_HEAD]     = 0;
+  buf[DROPLET_POS_HEAD + 1] = 0;
 
   // Nickname
   if (NULL != pguid) {
-    buf[4] = pguid[14]; // (g_node_nickname >> 8) & 0xff;
-    buf[5] = pguid[15]; // g_node_nickname & 0xff;
+    buf[DROPLET_POS_NICKNAME]     = pguid[14]; // (g_node_nickname >> 8) & 0xff;
+    buf[DROPLET_POS_NICKNAME + 1] = pguid[15]; // g_node_nickname & 0xff;
   }
 
   // VSCP Class
-  buf[6] = (VSCP_CLASS1_INFORMATION >> 8) & 0xff;
-  buf[7] = VSCP_CLASS1_INFORMATION & 0xff;
+  buf[DROPLET_POS_CLASS]     = (VSCP_CLASS1_INFORMATION >> 8) & 0xff;
+  buf[DROPLET_POS_CLASS + 1] = VSCP_CLASS1_INFORMATION & 0xff;
 
   // VSCP Type
-  buf[8] = (VSCP_TYPE_INFORMATION_NODE_HEARTBEAT >> 8) & 0xff;
-  buf[9] = VSCP_TYPE_INFORMATION_NODE_HEARTBEAT & 0xff;
+  buf[DROPLET_POS_TYPE]     = (VSCP_TYPE_INFORMATION_NODE_HEARTBEAT >> 8) & 0xff;
+  buf[DROPLET_POS_TYPE + 1] = VSCP_TYPE_INFORMATION_NODE_HEARTBEAT & 0xff;
 
   // Data
-  buf[10] = 0;    // User specific
-  buf[11] = 0xff; // All zones
-  buf[12] = 0xff; // All subzones
+  buf[DROPLET_POS_DATA]     = 0;    // User specific
+  buf[DROPLET_POS_DATA + 1] = 0xff; // All zones
+  buf[DROPLET_POS_DATA + 2] = 0xff; // All subzones
+
+  return VSCP_ERROR_SUCCESS;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// droplet_getMinBufSizeEv
+//
+
+size_t
+droplet_getMinBufSizeEv(vscpEvent *pev)
+{
+  // Need event pointer
+  if (NULL == pev) {
+    ESP_LOGE(TAG, "Pointer to event is NULL");
+    return 0;
+  }
+
+  return (DROPLET_MIN_FRAME + pev->sizeData);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// droplet_getMinBufSizeEx
+//
+
+size_t
+droplet_getMinBufSizeEx(vscpEventEx *pex)
+{
+  // Need event ex pointer
+  if (NULL == pex) {
+    ESP_LOGE(TAG, "Pointer to event ex is NULL");
+    return 0;
+  }
+
+  return (DROPLET_MIN_FRAME + pex->sizeData);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// droplet_evToFrame
+//
+
+int
+droplet_evToFrame(uint8_t *buf, uint8_t len, const vscpEvent *pev)
+{
+  // Need a buffer
+  if (NULL == buf) {
+    ESP_LOGE(TAG, "Pointer to buffer is NULL");
+    return VSCP_ERROR_INVALID_POINTER;
+  }
+
+  // Need event
+  if (NULL == pev) {
+    ESP_LOGE(TAG, "Pointer to event is NULL");
+    return VSCP_ERROR_INVALID_POINTER;
+  }
+
+  // Must have room for frame
+  if (len < (DROPLET_MIN_FRAME + pev->sizeData)) {
+    ESP_LOGE(TAG, "Size of buffer is to small to fit event, len:%d", len);
+    return VSCP_ERROR_PARAMETER;
+  }
+
+  memset(buf, 0, len);
+
+  buf[DROPLET_POS_PKTID] = VSCP_ENCRYPTION_AES128;
+
+  // head
+  buf[DROPLET_POS_HEAD] = (pev->head >> 8) & 0xff;
+  buf[DROPLET_POS_HEAD] = pev->head & 0xff;
+
+  // nickname
+  buf[DROPLET_POS_NICKNAME]     = pev->GUID[14];
+  buf[DROPLET_POS_NICKNAME + 1] = pev->GUID[15];
+
+  // vscp-class
+  buf[DROPLET_POS_CLASS]        = (pev->vscp_class >> 8) & 0xff;
+  buf[DROPLET_POS_NICKNAME + 1] = pev->vscp_class & 0xff;
+
+  // vscp-type
+  buf[DROPLET_POS_TYPE]     = (pev->vscp_type >> 8) & 0xff;
+  buf[DROPLET_POS_TYPE + 1] = pev->vscp_type & 0xff;
+
+  // data
+  if (pev->sizeData) {
+    memcpy((buf + DROPLET_POS_DATA), pev->pdata, pev->sizeData);
+  }
 
   return VSCP_ERROR_SUCCESS;
 }
@@ -921,28 +1039,92 @@ droplet_exToFrame(uint8_t *buf, uint8_t len, const vscpEventEx *pex)
 
   memset(buf, 0, len);
 
-  // Packet id VSCP
-  buf[0] = (VSCP_DEFAULT_TCP_PORT >> 8) & 0xff;
-  buf[1] = VSCP_DEFAULT_TCP_PORT & 0xff;
-
   // head
-  buf[2] = (pex->head >> 8) & 0xff;
-  buf[3] = pex->head & 0xff;
+  buf[DROPLET_POS_HEAD]     = (pex->head >> 8) & 0xff;
+  buf[DROPLET_POS_HEAD + 1] = pex->head & 0xff;
 
   // nickname
-  buf[4] = pex->GUID[14];
-  buf[5] = pex->GUID[15];
+  buf[DROPLET_POS_NICKNAME]     = pex->GUID[14];
+  buf[DROPLET_POS_NICKNAME + 1] = pex->GUID[15];
 
   // vscp-class
-  buf[6] = (pex->vscp_class >> 8) & 0xff;
-  buf[7] = pex->vscp_class & 0xff;
+  buf[DROPLET_POS_CLASS]     = (pex->vscp_class >> 8) & 0xff;
+  buf[DROPLET_POS_CLASS + 1] = pex->vscp_class & 0xff;
 
   // vscp-type
-  buf[8] = (pex->vscp_type >> 8) & 0xff;
-  buf[9] = pex->vscp_type & 0xff;
+  buf[DROPLET_POS_TYPE]     = (pex->vscp_type >> 8) & 0xff;
+  buf[DROPLET_POS_TYPE + 1] = pex->vscp_type & 0xff;
 
   // data
-  memcpy((buf + 10), pex->data, pex->sizeData);
+  if (pex->sizeData) {
+    memcpy((buf + DROPLET_POS_DATA), pex->data, pex->sizeData);
+  }
+
+  return VSCP_ERROR_SUCCESS;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// droplet_frameToEv
+//
+
+int
+droplet_frameToEv(vscpEvent *pev, const uint8_t *buf, uint8_t len, uint32_t timestamp)
+{
+  // Need event
+  if (NULL == pev) {
+    ESP_LOGE(TAG, "Pointer to event is NULL");
+    return VSCP_ERROR_INVALID_POINTER;
+  }
+
+  // Must be at least have min size
+  if (len < (DROPLET_MIN_FRAME + pev->sizeData)) {
+    ESP_LOGE(TAG, "esp-now data is too short, len:%d", len);
+    return VSCP_ERROR_MTU;
+  }
+
+  // First two bytes of buffer must be VSCP magic bytes, if not
+  // this is not a VSCP frame
+  if (!(buf[0] == ((VSCP_DEFAULT_TCP_PORT >> 8) & 0xff)) || !(buf[1] == (VSCP_DEFAULT_TCP_PORT & 0xff))) {
+    ESP_LOGE(TAG, "esp-now data is too short, len:%d", len);
+    return VSCP_ERROR_MTU;
+  }
+
+  memset(pev, 0, sizeof(vscpEvent));
+  if (NULL != pev->pdata) {
+    VSCP_FREE(pev);
+    pev->pdata = NULL;
+  }
+
+  // Set VSCP size
+  pev->sizeData = len - DROPLET_MIN_FRAME;
+  pev->pdata    = VSCP_MALLOC(pev->sizeData);
+  if (NULL == pev->pdata) {
+    return VSCP_ERROR_MEMORY;
+  }
+
+  // Copy in VSCP data
+  memcpy(pev->pdata, buf + DROPLET_MIN_FRAME, pev->sizeData);
+
+  // Set timestamp if not set
+  if (!timestamp) {
+    pev->timestamp = esp_timer_get_time();
+  }
+  else {
+    pev->timestamp = timestamp;
+  }
+
+  // Head
+  pev->head = (buf[DROPLET_POS_HEAD] << 8) + buf[DROPLET_POS_HEAD + 1];
+
+  // Nickname
+  pev->GUID[14] = buf[DROPLET_POS_NICKNAME];
+  pev->GUID[15] = buf[DROPLET_POS_NICKNAME + 1];
+
+  // VSCP class
+  pev->vscp_class = (buf[DROPLET_POS_CLASS] << 8) + buf[DROPLET_POS_CLASS + 1];
+
+  // VSCP type
+  pev->vscp_type = (buf[DROPLET_POS_TYPE] << 8) + buf[DROPLET_POS_TYPE + 1];
 
   return VSCP_ERROR_SUCCESS;
 }
@@ -961,7 +1143,7 @@ droplet_frameToEx(vscpEventEx *pex, const uint8_t *buf, uint8_t len, uint32_t ti
   }
 
   // Must at least have min size
-  if (len < DROPLET_MIN_FRAME) {
+  if (len < (DROPLET_MIN_FRAME + +pex->sizeData)) {
     ESP_LOGE(TAG, "esp-now data is too short, len:%d", len);
     return VSCP_ERROR_MTU;
   }
@@ -985,21 +1167,106 @@ droplet_frameToEx(vscpEventEx *pex, const uint8_t *buf, uint8_t len, uint32_t ti
   if (!timestamp) {
     pex->timestamp = esp_timer_get_time();
   }
+  else {
+    pex->timestamp = timestamp;
+  }
 
   // Head
-  pex->head = (buf[2] << 8) + buf[3];
+  pex->head = (buf[DROPLET_POS_HEAD] << 8) + buf[DROPLET_POS_HEAD + 1];
 
   // Nickname
-  pex->GUID[14] = buf[4];
-  pex->GUID[15] = buf[5];
+  pex->GUID[14] = buf[DROPLET_POS_NICKNAME];
+  pex->GUID[15] = buf[DROPLET_POS_NICKNAME + 1];
 
   // VSCP class
-  pex->vscp_class = (buf[6] << 8) + buf[7];
+  pex->vscp_class = (buf[DROPLET_POS_CLASS] << 8) + buf[DROPLET_POS_CLASS + 1];
 
   // VSCP type
-  pex->vscp_type = (buf[8] << 8) + buf[9];
+  pex->vscp_type = (buf[DROPLET_POS_TYPE] << 8) + buf[DROPLET_POS_TYPE + 1];
 
   return VSCP_ERROR_SUCCESS;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// droplet_sendEvent
+//
+
+esp_err_t
+droplet_sendEvent(vscpEvent *pev, uint32_t wait_ms)
+{
+  esp_err_t rv;
+  uint8_t *pbuf;
+
+  // Need event
+  if (NULL == pev) {
+    ESP_LOGE(TAG, "Pointer to event is NULL");
+    return ESP_ERR_INVALID_ARG;
+  }
+
+  pbuf = VSCP_MALLOC(DROPLET_MIN_FRAME + pev->sizeData);
+  if (NULL == pbuf) {
+    return ESP_ERR_NO_MEM;
+  }
+
+  if (VSCP_ERROR_SUCCESS == (rv = droplet_evToFrame(pbuf, DROPLET_MIN_FRAME + pev->sizeData, pev))) {
+    VSCP_FREE(pbuf);
+    return rv;
+  }
+
+  if (ESP_OK == (rv = droplet_send(DROPLET_ADDR_GROUP_VSCP,
+                                   false,
+                                   g_droplet_config.nEncryption,
+                                   g_droplet_config.ttl,
+                                   pbuf,
+                                   DROPLET_MIN_FRAME + pev->sizeData,
+                                   wait_ms))) {
+    VSCP_FREE(pbuf);
+    return rv;
+  }
+
+  VSCP_FREE(pbuf);
+  return ESP_OK;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// droplet_sendEventEx
+//
+
+esp_err_t
+droplet_sendEventEx(vscpEventEx *pex, uint32_t wait_ms)
+{
+  esp_err_t rv;
+  uint8_t *pbuf;
+
+  // Need event
+  if (NULL == pex) {
+    ESP_LOGE(TAG, "Pointer to event ex is NULL");
+    return ESP_ERR_INVALID_ARG;
+  }
+
+  pbuf = VSCP_MALLOC(DROPLET_MIN_FRAME + pex->sizeData);
+  if (NULL == pbuf) {
+    return ESP_ERR_NO_MEM;
+  }
+
+  if (VSCP_ERROR_SUCCESS == (rv = droplet_evToFrame(pbuf, DROPLET_MIN_FRAME + pex->sizeData, pex))) {
+    VSCP_FREE(pbuf);
+    return rv;
+  }
+
+  if (ESP_OK == (rv = droplet_send(DROPLET_ADDR_GROUP_VSCP,
+                                   false,
+                                   g_droplet_config.nEncryption,
+                                   g_droplet_config.ttl,
+                                   pbuf,
+                                   DROPLET_MIN_FRAME + pex->sizeData,
+                                   wait_ms))) {
+    VSCP_FREE(pbuf);
+    return rv;
+  }
+
+  VSCP_FREE(pbuf);
+  return ESP_OK;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1035,7 +1302,7 @@ droplet_parse_vscp_json(const char *jsonVscpEventObj, vscpEventEx *pex)
 
   if (cJSON_GetObjectItem(root, "vscpHead")) {
     pex->head = (uint16_t) cJSON_GetObjectItem(root, "vscpHead")->valueint;
-    ESP_LOGD(TAG, "vscpHead=%u", pex->head);
+    ESP_LOGD(TAG, "vscpHead=%X", pex->head);
   }
 
   if (cJSON_GetObjectItem(root, "vscpObId")) {
@@ -1084,8 +1351,8 @@ droplet_parse_vscp_json(const char *jsonVscpEventObj, vscpEventEx *pex)
 
   if (cJSON_GetObjectItem(root, "vscpData")) {
 
-    cJSON *pdata = cJSON_GetObjectItem(root, "vscpData");
-    pex->sizeData     = cJSON_GetArraySize(pdata);
+    cJSON *pdata  = cJSON_GetObjectItem(root, "vscpData");
+    pex->sizeData = cJSON_GetArraySize(pdata);
     ESP_LOGD(TAG, "VSCP data size=%d", pex->sizeData);
     for (int i = 0; i < pex->sizeData; i++) {
       cJSON *pitem = cJSON_GetArrayItem(pdata, i);
@@ -1094,7 +1361,6 @@ droplet_parse_vscp_json(const char *jsonVscpEventObj, vscpEventEx *pex)
         ESP_LOGD(TAG, "data%d=%u", i, pitem->valueint);
       }
     }
-
   }
 
   cJSON_Delete(root);
@@ -1111,7 +1377,7 @@ droplet_parse_vscp_json(const char *jsonVscpEventObj, vscpEventEx *pex)
 int
 droplet_create_vscp_json(char *strObj, vscpEventEx *pex)
 {
-  //int rv;
+  // int rv;
   char str[80];
   cJSON *root = cJSON_CreateObject();
 
@@ -1134,10 +1400,10 @@ droplet_create_vscp_json(char *strObj, vscpEventEx *pex)
   char *json_string = cJSON_Print(root);
   if (NULL != json_string) {
     ESP_LOGD(TAG, "%s", json_string);
-    strcpy(strObj, json_string);   
+    strcpy(strObj, json_string);
   }
   cJSON_free(json_string);
   cJSON_Delete(root);
-  
+
   return VSCP_ERROR_SUCCESS;
 }

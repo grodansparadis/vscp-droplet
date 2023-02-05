@@ -1514,7 +1514,7 @@ vscp_heartbeat_task(void *pvParameter)
   while (true) {
 
     ESP_LOGI(TAG, "Send heartbeat.");
-    ret = droplet_send(dest_addr, false, false, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
+    ret = droplet_send(dest_addr, false, VSCP_ENCRYPTION_NONE, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
     if (ret != ESP_OK) {
       ESP_LOGE(TAG, "Failed to send heartbeat. ret = %d", ret);
     }
@@ -1871,7 +1871,7 @@ app_main(void)
     ESP_LOGE(TAG, "Could not create heartbeat event, will exit task. VSCP rv %d", ret);
   }
 
-  ret = droplet_send(dest_addr, false, true, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
+  ret = droplet_send(dest_addr, false, VSCP_ENCRYPTION_NONE, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
   if (ESP_OK != ret) {
     ESP_LOGE(TAG, "Could not send droplet start event. rv %d", ret);
   }

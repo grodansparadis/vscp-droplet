@@ -47,15 +47,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <esp_wifi_types.h>
+
 #include <vscp.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#define DROPLET_MIN_FRAME 19  // Number of bytes in minimum frame
-#define DROPLET_MAX_DATA  128 // Max VSCP data (of possible 512 bytes) that a frame can hold
-#define DROPLET_MAX_FRAME DROPLET_MIN_FRAME + DROPLET_MAX_DATA
 
 /**
  * @brief Frame positions for data in the VSCP droplet frame
@@ -77,6 +75,10 @@ extern "C" {
 #define DROPLET_POS_SIZE     18 // Data size (needed because of encryption padding)
 #define DROPLET_POS_DATA     19 // VSCP data (max 128 bytes)
 
+#define DROPLET_MIN_FRAME DROPLET_POS_DATA // Number of bytes in minimum frame
+#define DROPLET_MAX_DATA  128              // Max VSCP data (of possible 512 bytes) that a frame can hold
+#define DROPLET_MAX_FRAME DROPLET_MIN_FRAME + DROPLET_MAX_DATA
+
 /**
  * @brief Initialize the configuration of droplet
  */
@@ -86,7 +88,7 @@ typedef struct {
   bool bForwardEnable;         // Forward when packets are received
   bool bForwardSwitchChannel;  // Forward data packet with exchange channel
   uint8_t sizeQueue;           // Size of receive queue
-  uint8_t nEncryptionCode;     // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256
+  uint8_t nEncryption;         // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256
   bool bFilterAdjacentChannel; // Don't receive if from other channel
   int filterWeakSignal;        // Filter onm RSSI (zero is no rssi filtering)
   const uint8_t pmk[32];       // Primary master key (16 (EAS128)/24(AES192)/32(AES256))
@@ -154,54 +156,195 @@ droplet_init(const droplet_config_t *config);
 
 /**
  * @brief Send droplet frame
- * 
- * @param dest_addr Pointer to destination mac address. Normally broadcast 0xff,0xff,0xff,0xff,0xff,0xff 
+ *
+ * @param dest_addr Pointer to destination mac address. Normally broadcast 0xff,0xff,0xff,0xff,0xff,0xff
  * @param bPreserveHeader Set to true if header is already set in payload and need to be preserved. If false
  *                        ttl , magic etc will be set by the routine.
- * @param bEncrypt  Set to tru to encrypt the frame. Frame size will increase by 16 as the iv is appended to 
- *                  the end of it.
- * @param ttl   Time to live for frame. Will be decrease for every hop.
- * @param payload The frame data- 
- * @param size  The size of the payload-
- * @param wait_ticks Ticks to wait for the frame to get sent.
+ * @param nEncrypt  Encryption type. Frame size will increase by 16 as the iv is appended to
+ *                  the end of it. Valid values is
+ *                  VSCP_ENCRYPTION_NONE           0
+ *                  VSCP_ENCRYPTION_AES128         1
+ *                  VSCP_ENCRYPTION_AES192         2
+ *                  VSCP_ENCRYPTION_AES256         3
+ * @param ttl   Time to live for frame. Will be decrease by one for every hop.
+ * @param payload The frame data.
+ * @param size  The size of the payload.
+ * @param wait_ms Milliseconds to wait for the frame to get sent.
  * @return esp_err_t ESP_OK is returned if all is OK
  */
 esp_err_t
 droplet_send(const uint8_t *dest_addr,
              bool bPreserveHeader,
-             bool bEncrypt,
+             uint8_t nEncrypt,
              uint8_t ttl,
              uint8_t *data,
              size_t size,
-             TickType_t wait_ticks);
+             uint16_t wait_ms);
+
+/**
+ * @brief Build full GUID from mac address
+ *
+ * @param pguid Pointer to GUID that will get data
+ * @param pmac Pointer to six byte mac
+ * @param nickname Nickname for node. Set to zero if not used.
+ * @return int VSCP_ERROR_SUCCES is returned if all goes well. Otherwise VSCP error code is returned.
+ */
+int
+droplet_build_guid_from_mac(uint8_t *pguid, const uint8_t *pmac, uint16_t nickname);
+
+/**
+ * @brief Construct VSCP level I heartbeat frame
+ *
+ * @param buf Pointer to buffer that will get the frame data
+ * @param len Size of the buffer. Must be at least DROPLET_PACKET_MIN_SIZE + 3
+ * @param pguid Pointer to node GUID. Can be NULL in which case the node id will be set to zero.
+ * @return int VSCP_ERROR_SUCCES is returned if all goes well. Otherwise VSCP error code is returned.
+ *
+ * The user defined first byte and zone/subzone is predefined in this call. Zone information is set to 0xff
+ * for all zones/subzones and the user defined byte is set to zero.
+ */
+
+int
+droplet_build_l1_heartbeat(uint8_t *buf, uint8_t len, const uint8_t *pguid);
+
+/**
+ * @brief Construct VSCP level II heartbeat frame
+ *
+ * @param buf Pointer to buffer that will get the frame data
+ * @param len Size of the buffer. Must be at least DROPLET_PACKET_MIN_SIZE + 3
+ * @param pguid Pointer to node GUID. Can be NULL in which case the node id will be set to zero.
+ * @param pname Pointer to node name or NULL in which case no name is set.
+ * @return int VSCP_ERROR_SUCCES is returned if all goes well. Otherwise VSCP error code is returned.
+ *
+ */
+
+int
+droplet_build_l2_heartbeat(uint8_t *buf, uint8_t len, const uint8_t *pguid, const char *pname);
+
+
+/**
+ * @fn droplet_sendEvent
+ * @brief  Send event on droplet network
+ * 
+ * @param pev Event to send 
+ * @param wait_ms Time in milliseconds to wait for send
+ * @return esp_err_t Error code. ESP_OK if all is OK.
+ */
+
+esp_err_t
+droplet_sendEvent(vscpEvent *pev, uint32_t wait_ms);
+
+/**
+ * @fn droplet_sendEventEx
+ * @brief Send event ex on droplet network
+ * 
+ * @param pex Pointer to event ex to send.
+ * @param wait_ms Time in milliseconds to wait for send
+ * @return esp_err_t Error code. ESP_OK if all is OK.
+ */
+esp_err_t
+droplet_sendEventEx(vscpEventEx *pex, uint32_t wait_ms);
+
+/**
+ * @fn droplet_getMinBufSizeEv
+ * @brief Get minimum buffer size for a VSCP event
+ *
+ * @param pev Pointeŕ to event
+ * @return size_t Needed buffer size or zero for error (invalid event pointer).
+ */
+size_t
+droplet_getMinBufSizeEv(vscpEvent *pev);
+
+/**
+ * @fn droplet_getMinBufSizeEx
+ * @brief Get minimum buffer size for a VSCP ex event
+ *
+ * @param pex Pointer to event ex
+ * @return size_t Needed buffer size or zero for error (invalid event pointer).
+ */
+size_t
+droplet_getMinBufSizeEx(vscpEventEx *pex);
+
+/**
+ * @brief Construct VSCP ESP-NOW frame form event structure
+ *
+ * @param buf Pointer to buffer that will get the frame data
+ * @param len Size of buffer. The buffer should have room for the frame plus VSCP data so it
+ * should have a length that exceeds DROPLET_PACKET_MIN_SIZE + VSCP event data length.
+ * @param pev Pointer to VSCP event which will have its content written to the buffer.
+ * @return int VSCP_ERROR_SUCCES is returned if all goes well. Otherwise VSCP error code is returned.
+ */
+
+int
+droplet_evToFrame(uint8_t *buf, uint8_t len, const vscpEvent *pev);
+
+/**
+ * @brief Construct VSCP ESP-NOW frame form event ex structure
+ *
+ * @param buf Pointer to buffer that will get the frame data
+ * @param len Size of buffer. The buffer should have room for the frame plus VSCP data so it
+ * should have a length that exceeds DROPLET_PACKET_MIN_SIZE + VSCP event data length.
+ * @param pex Pointer to VSCP event ex which will have its content written to the buffer.
+ * @return int VSCP_ERROR_SUCCES is returned if all goes well. Otherwise VSCP error code is returned.
+ */
+
+int
+droplet_exToFrame(uint8_t *buf, uint8_t len, const vscpEventEx *pex);
+
+/**
+ * @brief Fill in Data of VSCP ex event from esp-now frame
+ *
+ * @param pev Pointer to VSCP event
+ * @param buf  Buffer holding esp-now frame data
+ * @param len  Len of buffer
+ * @param timestamp The event timestamp normally comes from wifi_pkt_rx_ctrl_t in the wifi frame. If
+ * set to zero  it will be set from tickcount
+ * @return int VSCP_ERROR_SUCCES is returned if all goes well. Otherwise VSCP error code is returned.
+ */
+int
+droplet_frameToEv(vscpEvent *pev, const uint8_t *buf, uint8_t len, uint32_t timestamp);
+
+/**
+ * @brief Fill in Data of VSCP ex event from esp-now frame
+ *
+ * @param pex Pointer to VSCP ex event
+ * @param buf  Buffer holding esp-now frame data
+ * @param len  Len of buffer
+ * @param timestamp The event timestamp normally comes from wifi_pkt_rx_ctrl_t in the wifi frame. If
+ * set to zero  it will be set from tickcount
+ * @return int VSCP_ERROR_SUCCES is returned if all goes well. Otherwise VSCP error code is returned.
+ */
+int
+droplet_frameToEx(vscpEventEx *pex, const uint8_t *buf, uint8_t len, uint32_t timestamp);             
 
 /**
  * @brief Set VSCP handler event callback
- * 
+ *
  * @param cb Callback
- * 
- * Calls a VSCP event callback for further handling when a valid event 
- * is received, 
- * 
+ *
+ * Calls a VSCP event callback for further handling when a valid event
+ * is received,
+ *
  */
-void droplet_set_vscp_handler_cb(vscp_event_handler_cb_t  *cb);
+void
+droplet_set_vscp_handler_cb(vscp_event_handler_cb_t *cb);
 
 /**
- * @brief 
- * 
- * @param jsonVscpEventObj 
- * @param pex 
- * @return int 
+ * @brief
+ *
+ * @param jsonVscpEventObj
+ * @param pex
+ * @return int
  */
 int
 droplet_parse_vscp_json(const char *jsonVscpEventObj, vscpEventEx *pex);
 
 /**
- * @brief 
- * 
- * @param strObj 
- * @param pex 
- * @return int 
+ * @brief
+ *
+ * @param strObj
+ * @param pex
+ * @return int
  */
 int
 droplet_create_vscp_json(char *strObj, vscpEventEx *pex);
@@ -290,93 +433,7 @@ droplet_sec_auth_decrypt(const uint8_t *input,
                          size_t *olen,
                          size_t tag_len);
 
-/**
- * @brief Send droplet frame
- *
- * @param dest_addr Destination max address
- * @param bPreserveHeader Will leave pktid, ttl and magic unchanged.
- * @param bEncrypt  Set to true for encrypted content
- * @param ttl Time to live for frame. Set tpo zero for no node hop
- * @param data  VSCP data to send | vscp-head | vscp-nickname | vscp-class | vscp-type | vscp-data |
- * @param size Size for the VSCP data
- * @param wait_ticks Time to wait for send completion.
- * @return esp_err_t
- */
 
-esp_err_t
-droplet_send(const uint8_t *dest_addr,
-             bool bPreserveHeader,
-             bool bEncrypt,
-             uint8_t ttl,
-             uint8_t *data,
-             size_t size,
-             TickType_t wait_ticks);
-
-/**
- * @brief Build full GUID from mac address
- *
- * @param pguid Pointer to GUID that will get data
- * @param pmac Pointer to six byte mac
- * @param nickname Nickname for node. Set to zero if not used.
- * @return int VSCP_ERROR_SUCCES is returned if all goes well. Otherwise VSCP error code is returned.
- */
-int
-droplet_build_guid_from_mac(uint8_t *pguid, const uint8_t *pmac, uint16_t nickname);
-
-/**
- * @brief Construct VSCP level I heartbeat frame
- *
- * @param buf Pointer to buffer that will get the frame data
- * @param len Size of the buffer. Must be at least DROPLET_PACKET_MIN_SIZE + 3
- * @param pguid Pointer to node GUID. Can be NULL in which case the node id will be set to zero.
- * @return int VSCP_ERROR_SUCCES is returned if all goes well. Otherwise VSCP error code is returned.
- *
- * The user defined first byte and zone/subzone is predefined in this call. Zone information is set to 0xff
- * for all zones/subzones and the user defined byte is set to zero.
- */
-
-int
-droplet_build_l1_heartbeat(uint8_t *buf, uint8_t len, const uint8_t *pguid);
-
-/**
- * @brief Construct VSCP level II heartbeat frame
- *
- * @param buf Pointer to buffer that will get the frame data
- * @param len Size of the buffer. Must be at least DROPLET_PACKET_MIN_SIZE + 3
- * @param pguid Pointer to node GUID. Can be NULL in which case the node id will be set to zero.
- * @param pname Pointer to node name or NULL in which case no name is set.
- * @return int VSCP_ERROR_SUCCES is returned if all goes well. Otherwise VSCP error code is returned.
- *
- */
-
-int
-droplet_build_l2_heartbeat(uint8_t *buf, uint8_t len, const uint8_t *pguid, const char *pname);
-
-/**
- * @brief Construct VSCP ESP-NOW frame form event structure
- *
- * @param buf Pointer to buffer that will get the frame data
- * @param len Size of buffer. The buffer should have room for the frame plus VSCP data so it
- * should have a length that exceeds DROPLET_PACKET_MIN_SIZE + VSCP event data length.
- * @param pex Pointer to VSCP event ex which will have its content written to the buffer.
- * @return int VSCP_ERROR_SUCCES is returned if all goes well. Otherwise VSCP error code is returned.
- */
-
-int
-droplet_exToFrame(uint8_t *buf, uint8_t len, const vscpEventEx *pex);
-
-/**
- * @brief Fill in Data of VSCP ex event from esp-now frame
- *
- * @param pex Pointer to VSCP ex event
- * @param buf  Buffer holding esp-now frame data
- * @param len  Len of buffer
- * @param timestamp The event timestamp normally comes from wifi_pkt_rx_ctrl_t in the wifi frame. If
- * set to zero  it will be set from tickcount
- * @return int VSCP_ERROR_SUCCES is returned if all goes well. Otherwise VSCP error code is returned.
- */
-int
-droplet_frameToex(vscpEventEx *pex, const uint8_t *buf, uint8_t len, uint32_t timestamp);
 
 #ifdef __cplusplus
 }

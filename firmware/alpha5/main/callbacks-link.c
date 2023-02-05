@@ -50,14 +50,15 @@
 #include "vscp-compiler.h"
 #include "vscp-projdefs.h"
 
+#include "vscp-droplet.h"
 #include "tcpsrv.h"
 #include "main.h"
 
-// Defines from demo.c
+#define TAG "linkcb"
 
 extern node_persistent_config_t g_persistent;
-extern QueueHandle_t g_queueDroplet;  // Received events from VSCP link clients
-//extern vscp_fifo_t g_fifoEventsIn;
+extern QueueHandle_t g_queueDroplet;          // Received events from VSCP link clients
+extern SemaphoreHandle_t g_droplet_send_lock; // From droplet
 // extern vscpctx_t g_ctx[MAX_TCP_CONNECTIONS];
 
 // ****************************************************************************
@@ -367,9 +368,21 @@ vscp_link_callback_send(const void *pdata, vscpEvent *pev)
   pctx->statistics.cntTransmitFrames++;
   pctx->statistics.cntTransmitData += pev->sizeData;
 
-  if (pdTRUE != xQueueSend(g_queueDroplet, &pev, 0)) {
-    pctx->statistics.cntOverruns++;
-    return VSCP_ERROR_TRM_FULL;
+  if (pdTRUE == xSemaphoreTake(g_queueDroplet, (TickType_t) 10)) {
+    if (pdTRUE != xQueueSend(g_queueDroplet, &pev, 0)) {
+      pctx->statistics.cntOverruns++;
+      xSemaphoreGive(g_queueDroplet);
+      return VSCP_ERROR_TRM_FULL;
+    }
+    xSemaphoreGive(g_queueDroplet);
+  }
+  else {
+    ESP_LOGW(TAG, "Unable to get mutex for droplet queue");
+  }
+
+  if (pdTRUE == xSemaphoreTake(g_droplet_send_lock, pdMS_TO_TICKS(10))) {
+    
+    xSemaphoreGive(g_droplet_send_lock);
   }
 
   // We own the event from now on and must
@@ -391,7 +404,6 @@ vscp_link_callback_retr(const void *pdata, vscpEvent *pev)
   }
 
   vscpctx_t *pctx = (vscpctx_t *) pdata;
-
 
   if (pdTRUE != xQueueReceive(pctx->queueClient, &(pev), 0)) {
     return VSCP_ERROR_RCV_EMPTY;
@@ -429,7 +441,7 @@ vscp_link_callback_enable_rcvloop(const void *pdata, int bEnable)
 //
 
 int
-vscp_link_callback_get_rcvloop_status(const void *pdata, int *pRcvLoop )
+vscp_link_callback_get_rcvloop_status(const void *pdata, int *pRcvLoop)
 {
   // Check pointer
   if (NULL == pdata) {
@@ -437,7 +449,7 @@ vscp_link_callback_get_rcvloop_status(const void *pdata, int *pRcvLoop )
   }
 
   vscpctx_t *pctx = (vscpctx_t *) pdata;
-  *pRcvLoop = pctx->bRcvLoop;
+  *pRcvLoop       = pctx->bRcvLoop;
 
   return VSCP_ERROR_SUCCESS;
 }
@@ -473,7 +485,7 @@ vscp_link_callback_clrAll(const void *pdata)
   }
 
   vscpctx_t *pctx = (vscpctx_t *) pdata;
-  //vscp_fifo_clear(&pctx->fifoEventsOut);
+  // vscp_fifo_clear(&pctx->fifoEventsOut);
   vscpEvent *pev;
   while (pdTRUE == xQueueReceive(pctx->queueClient, &(pev), 0)) {
     vscp_fwhlp_deleteEvent(&pev);
@@ -673,7 +685,7 @@ vscp_link_callback_wcyd(const void *pdata, uint64_t *pwcyd)
     return VSCP_ERROR_INVALID_POINTER;
   }
 
-  //vscpctx_t *pctx = (vscpctx_t *) pdata;
+  // vscpctx_t *pctx = (vscpctx_t *) pdata;
 
   *pwcyd = VSCP_SERVER_CAPABILITY_TCPIP | VSCP_SERVER_CAPABILITY_DECISION_MATRIX | VSCP_SERVER_CAPABILITY_IP4 |
            /*VSCP_SERVER_CAPABILITY_SSL |*/
@@ -694,7 +706,7 @@ vscp_link_callback_shutdown(const void *pdata)
     return VSCP_ERROR_INVALID_POINTER;
   }
 
-  //vscpctx_t *pctx = (vscpctx_t *) pdata;
+  // vscpctx_t *pctx = (vscpctx_t *) pdata;
   esp_restart();
 
   // At this point
@@ -722,7 +734,87 @@ vscp_link_callback_restart(const void *pdata)
     return VSCP_ERROR_INVALID_POINTER;
   }
 
-  //vscpctx_t *pctx = (vscpctx_t *) pdata;
+  // vscpctx_t *pctx = (vscpctx_t *) pdata;
+
+  esp_restart(); // Restart
+
+  return VSCP_ERROR_SUCCESS;
+}
+
+// ----------------------------------------------------------------------------
+//                                 Binary
+// ----------------------------------------------------------------------------
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_link_callback_bretr
+//
+
+int
+vscp_link_callback_bretr(const void *pdata)
+{
+  // Check pointer
+  if (NULL == pdata) {
+    return VSCP_ERROR_INVALID_POINTER;
+  }
+
+  // vscpctx_t *pctx = (vscpctx_t *) pdata;
+
+  esp_restart(); // Restart
+
+  return VSCP_ERROR_SUCCESS;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_link_callback_bsend
+//
+
+int
+vscp_link_callback_bsend(const void *pdata)
+{
+  // Check pointer
+  if (NULL == pdata) {
+    return VSCP_ERROR_INVALID_POINTER;
+  }
+
+  // vscpctx_t *pctx = (vscpctx_t *) pdata;
+
+  esp_restart(); // Restart
+
+  return VSCP_ERROR_SUCCESS;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_link_callback_brcvloop
+//
+
+int
+vscp_link_callback_brcvloop(const void *pdata)
+{
+  // Check pointer
+  if (NULL == pdata) {
+    return VSCP_ERROR_INVALID_POINTER;
+  }
+
+  // vscpctx_t *pctx = (vscpctx_t *) pdata;
+
+  esp_restart(); // Restart
+
+  return VSCP_ERROR_SUCCESS;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// vscp_link_callback_sec
+//
+
+int
+vscp_link_callback_sec(const void *pdata)
+{
+  // Check pointer
+  if (NULL == pdata) {
+    return VSCP_ERROR_INVALID_POINTER;
+  }
+
+  // vscpctx_t *pctx = (vscpctx_t *) pdata;
 
   esp_restart(); // Restart
 
