@@ -1668,6 +1668,14 @@ config_droplet_get_handler(httpd_req_t *req)
           g_persistent.dropletFilterAdjacentChannel ? "checked" : "");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
+  // Forward switch channel
+  sprintf(buf, "<br><input type=\"checkbox\" name=\"swchf\" value=\"true\" ");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf,
+          "%s><label for=\"swchf\"> Forward Switch Channel</label>",
+          g_persistent.dropletForwardSwitchChannel ? "checked" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
   sprintf(buf, "<br />Encryption:<select  name=\"enc\" >");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
   sprintf(buf,
@@ -1687,6 +1695,11 @@ config_droplet_get_handler(httpd_req_t *req)
           (VSCP_ENCRYPTION_AES256 == g_persistent.dropletEncryption) ? "selected" : "");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
   sprintf(buf, "</select>");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf,
+          "<br>Queue size (32):<input type=\"text\" name=\"qsize\" value=\"%d\" >",
+          g_persistent.dropletSizeQueue);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
   sprintf(buf,
@@ -1791,6 +1804,32 @@ do_config_droplet_get_handler(httpd_req_t *req)
         g_persistent.dropletFilterAdjacentChannel = false;
       }
 
+      // Write changed value to persistent storage
+      rv = nvs_set_u8(g_nvsHandle, "drop_filt", g_persistent.dropletFilterAdjacentChannel);
+      if (rv != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update droplet adj. freq. filter");
+      }
+
+      // Allow switching channel on forward
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "swchf", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found query parameter => swchf=%s", param);
+        if (NULL != strstr(param, "true")) {
+          g_persistent.dropletForwardSwitchChannel = true;
+        }
+        else {
+          g_persistent.dropletForwardSwitchChannel = false;
+        }
+      }
+      else {
+        g_persistent.dropletForwardSwitchChannel = false;
+      }
+
+      // Write changed value to persistent storage
+      rv = nvs_set_u8(g_nvsHandle, "drop_swchf", g_persistent.dropletForwardSwitchChannel);
+      if (rv != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update droplet adj. freq. filter");
+      }
+
       // channel
       if (ESP_OK == (rv = httpd_query_key_value(buf, "channel", param, WEBPAGE_PARAM_SIZE))) {
         ESP_LOGI(TAG, "Found query parameter => channel=%s", param);
@@ -1805,11 +1844,7 @@ do_config_droplet_get_handler(httpd_req_t *req)
         ESP_LOGE(TAG, "Error getting droplet channel => rv=%d", rv);
       }
 
-      // Write changed value to persistent storage
-      rv = nvs_set_u8(g_nvsHandle, "drop_filt", g_persistent.dropletFilterAdjacentChannel);
-      if (rv != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to update droplet adj. freq. filter");
-      }
+      
 
       // ttl
       if (ESP_OK == (rv = httpd_query_key_value(buf, "ttl", param, WEBPAGE_PARAM_SIZE))) {
@@ -1818,11 +1853,25 @@ do_config_droplet_get_handler(httpd_req_t *req)
         // Write changed value to persistent storage
         rv = nvs_set_u8(g_nvsHandle, "drop_ttl", g_persistent.dropletTtl);
         if (rv != ESP_OK) {
-          ESP_LOGE(TAG, "Failed to update start delay");
+          ESP_LOGE(TAG, "Failed to update droplet ttl");
         }
       }
       else {
         ESP_LOGE(TAG, "Error getting droplet ttl => rv=%d", rv);
+      }
+
+      // Queue size
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "qsize", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found query parameter => qsize=%s", param);
+        g_persistent.dropletSizeQueue = atoi(param);
+        // Write changed value to persistent storage
+        rv = nvs_set_u8(g_nvsHandle, "drop_qsize", g_persistent.dropletSizeQueue);
+        if (rv != ESP_OK) {
+          ESP_LOGE(TAG, "Failed to update droplet qsize");
+        }
+      }
+      else {
+        ESP_LOGE(TAG, "Error getting droplet queue size => rv=%d", rv);
       }
 
       // rssi

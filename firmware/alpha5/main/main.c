@@ -238,10 +238,12 @@ node_persistent_config_t g_persistent = {
   .dropletLongRange             = false,
   .droppletChannel              = 0, // Use wifi channel
   .dropletTtl                   = 32,
-  .dropletForwardEnable         = true, // Forward when packets are received
-  .dropletEncryption            = 1,    // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256
-  .dropletFilterAdjacentChannel = true, // Don't receive if from other channel
-  .dropletFilterWeakSignal      = -67,  // Filter onm RSSI (zero is no rssi filtering)
+  .dropletSizeQueue             = 32,                     // Size fo input queue
+  .dropletForwardEnable         = true,                   // Forward when packets are received
+  .dropletEncryption            = VSCP_ENCRYPTION_AES128, // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256
+  .dropletFilterAdjacentChannel = true,                   // Don't receive if from other channel
+  .dropletForwardSwitchChannel  = false,                  // Allow switchin gchannel on forward
+  .dropletFilterWeakSignal      = -67,                    // Filter onm RSSI (zero is no rssi filtering)
 };
 
 //----------------------------------------------------------
@@ -290,7 +292,7 @@ readPersistentConfigs(void)
   char buf[80];
   size_t length = sizeof(buf);
   uint8_t val;
-  
+
   // Set default primary key
   vscp_fwhlp_hex2bin(g_persistent.vscpLinkKey, 32, VSCP_DEFAULT_KEY32);
 
@@ -657,14 +659,14 @@ readPersistentConfigs(void)
   // Long Range
   rv = nvs_get_u8(g_nvsHandle, "drop_lr", &val);
   if (ESP_OK != rv) {
-    val = (uint8_t)g_persistent.dropletLongRange;
-    rv = nvs_set_u8(g_nvsHandle, "drop_lr", g_persistent.dropletLongRange);
+    val = (uint8_t) g_persistent.dropletLongRange;
+    rv  = nvs_set_u8(g_nvsHandle, "drop_lr", g_persistent.dropletLongRange);
     if (rv != ESP_OK) {
       ESP_LOGE(TAG, "Failed to update droplet long range");
     }
   }
   else {
-    g_persistent.dropletLongRange = (bool)val;
+    g_persistent.dropletLongRange = (bool) val;
   }
 
   // Channel
@@ -676,10 +678,19 @@ readPersistentConfigs(void)
     }
   }
 
+  // Default queue size
+  rv = nvs_get_u8(g_nvsHandle, "drop_qsize", &g_persistent.dropletSizeQueue);
+  if (ESP_OK != rv) {
+    rv = nvs_set_u8(g_nvsHandle, "drop_qsize", g_persistent.dropletSizeQueue);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to update droplet queue size");
+    }
+  }
+
   // Default ttl
   rv = nvs_get_u8(g_nvsHandle, "drop_ttl", &g_persistent.dropletTtl);
   if (ESP_OK != rv) {
-    rv = nvs_set_u8(g_nvsHandle, "drop_ttk", g_persistent.dropletTtl);
+    rv = nvs_set_u8(g_nvsHandle, "drop_ttl", g_persistent.dropletTtl);
     if (rv != ESP_OK) {
       ESP_LOGE(TAG, "Failed to update droplet ttl");
     }
@@ -688,17 +699,16 @@ readPersistentConfigs(void)
   // Forward
   rv = nvs_get_u8(g_nvsHandle, "drop_fw", &val);
   if (ESP_OK != rv) {
-    val = (uint8_t)g_persistent.dropletForwardEnable;
-    rv = nvs_set_u8(g_nvsHandle, "drop_fw", g_persistent.dropletForwardEnable);
+    val = (uint8_t) g_persistent.dropletForwardEnable;
+    rv  = nvs_set_u8(g_nvsHandle, "drop_fw", g_persistent.dropletForwardEnable);
     if (rv != ESP_OK) {
       ESP_LOGE(TAG, "Failed to update droplet forward");
     }
   }
   else {
-    g_persistent.dropletForwardEnable = (bool)val;
+    g_persistent.dropletForwardEnable = (bool) val;
   }
-  
-  
+
   // Encryption
   rv = nvs_get_u8(g_nvsHandle, "drop_enc", &g_persistent.dropletEncryption);
   if (ESP_OK != rv) {
@@ -711,14 +721,27 @@ readPersistentConfigs(void)
   // Adj filter channel
   rv = nvs_get_u8(g_nvsHandle, "drop_filt", &val);
   if (ESP_OK != rv) {
-    val = (uint8_t)g_persistent.dropletFilterAdjacentChannel;
-    rv = nvs_set_u8(g_nvsHandle, "drop_filt", g_persistent.dropletFilterAdjacentChannel);
+    val = (uint8_t) g_persistent.dropletFilterAdjacentChannel;
+    rv  = nvs_set_u8(g_nvsHandle, "drop_filt", g_persistent.dropletFilterAdjacentChannel);
     if (rv != ESP_OK) {
       ESP_LOGE(TAG, "Failed to update droplet adj channel filter");
     }
   }
   else {
-    g_persistent.dropletFilterAdjacentChannel = (bool)val;
+    g_persistent.dropletFilterAdjacentChannel = (bool) val;
+  }
+
+  // Allow switching channel on forward
+  rv = nvs_get_u8(g_nvsHandle, "drop_swchf", &val);
+  if (ESP_OK != rv) {
+    val = (uint8_t) g_persistent.dropletForwardSwitchChannel;
+    rv  = nvs_set_u8(g_nvsHandle, "drop_swchf", g_persistent.dropletForwardSwitchChannel);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to update droplet shitch channel on forward");
+    }
+  }
+  else {
+    g_persistent.dropletFilterAdjacentChannel = (bool) val;
   }
 
   // RSSI limit
@@ -1514,7 +1537,8 @@ vscp_heartbeat_task(void *pvParameter)
   while (true) {
 
     ESP_LOGI(TAG, "Send heartbeat.");
-    ret = droplet_send(dest_addr, false, VSCP_ENCRYPTION_NONE, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
+    ret =
+      droplet_send(dest_addr, false, VSCP_ENCRYPTION_NONE, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
     if (ret != ESP_OK) {
       ESP_LOGE(TAG, "Failed to send heartbeat. ret = %d", ret);
     }
@@ -1678,12 +1702,12 @@ app_main(void)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-#if CONFIG_ESPNOW_ENABLE_LONG_RANGE
-    ESP_ERROR_CHECK(
-      esp_wifi_set_protocol(ESP_IF_WIFI_STA,
-                            WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR));
-#endif
-  }
+    if (g_persistent.dropletLongRange) {
+      ESP_ERROR_CHECK(
+        esp_wifi_set_protocol(ESP_IF_WIFI_STA,
+                              WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR));
+    }
+  } // !provisioning
 
   if (led_indicator_start(g_led_handle, BLINK_CONNECTING) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to start indicator lite");
@@ -1726,7 +1750,7 @@ app_main(void)
       break;
 
     case ALPHA_LOG_UDP:
-      //ESP_ERROR_CHECK(udp_logging_init(g_persistent.logUrl, g_persistent.logPort, g_persistent.logwrite2Stdout));
+      // ESP_ERROR_CHECK(udp_logging_init(g_persistent.logUrl, g_persistent.logPort, g_persistent.logwrite2Stdout));
       break;
 
     case ALPHA_LOG_TCP:
@@ -1827,13 +1851,13 @@ app_main(void)
   // ----------------------------------------------------------------------------
 
   // Initialize droplet
-  droplet_config_t droplet_config = { .channel                = 1,
-                                      .ttl                    = 32,
-                                      .bForwardEnable         = true,
-                                      .bForwardSwitchChannel  = false,
-                                      .sizeQueue              = 32,
-                                      .bFilterAdjacentChannel = false,
-                                      .filterWeakSignal       = false };
+  droplet_config_t droplet_config = { .channel                = g_persistent.droppletChannel,
+                                      .ttl                    = g_persistent.dropletTtl,
+                                      .bForwardEnable         = g_persistent.dropletForwardEnable,
+                                      .sizeQueue              = g_persistent.dropletSizeQueue,
+                                      .bFilterAdjacentChannel = g_persistent.dropletFilterAdjacentChannel,
+                                      .bForwardSwitchChannel  = g_persistent.dropletForwardSwitchChannel,
+                                      .filterWeakSignal       = g_persistent.dropletFilterWeakSignal };
 
   // Set primary key
   memcpy(droplet_config.pmk, g_persistent.pmk, 32);

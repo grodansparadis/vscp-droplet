@@ -97,6 +97,8 @@
     "initializer_list": "c",
     "regex": "c",
     "valarray": "c",
-    "esp_https_ota.h": "c"
+    "esp_https_ota.h": "c",
+    "esp_wifi.h": "c",
+    "esp_wifi_types.h": "c"
   }
 }

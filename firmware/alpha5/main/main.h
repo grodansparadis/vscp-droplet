@@ -157,12 +157,14 @@ typedef struct {
 
   // Droplet
   bool dropletLongRange;             // Enable long range mode
+  uint8_t dropletSizeQueue;         // Input queue size
   uint8_t droppletChannel;           // Channel to use (zero is current)
   uint8_t dropletTtl;                // Default ttl
   bool dropletForwardEnable;         // Forward when packets are received
   uint8_t dropletEncryption;         // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256
   bool dropletFilterAdjacentChannel; // Don't receive if from other channel
-  int8_t dropletFilterWeakSignal;       // Filter on RSSI (zero is no rssi filtering)
+  bool dropletForwardSwitchChannel;  // Allow switching channel on forward
+  int8_t dropletFilterWeakSignal;    // Filter on RSSI (zero is no rssi filtering)
 
   // Web server
   uint16_t webPort;     // Port web server listens on

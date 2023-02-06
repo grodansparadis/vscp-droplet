@@ -58,7 +58,7 @@
 
 extern node_persistent_config_t g_persistent;
 extern QueueHandle_t g_queueDroplet;          // Received events from VSCP link clients
-extern SemaphoreHandle_t g_droplet_send_lock; // From droplet
+//extern SemaphoreHandle_t g_droplet_send_lock; // From droplet
 // extern vscpctx_t g_ctx[MAX_TCP_CONNECTIONS];
 
 // ****************************************************************************
@@ -352,10 +352,14 @@ vscp_link_callback_test(const void *pdata, const char *arg)
 int
 vscp_link_callback_send(const void *pdata, vscpEvent *pev)
 {
+  esp_err_t ret;
+
+  printf("Callback send 1\n");
+
   if ((NULL == pdata) && (NULL == pev)) {
     return VSCP_ERROR_INVALID_POINTER;
   }
-
+printf("Callback send 2\n");
   vscpctx_t *pctx = (vscpctx_t *) pdata;
 
   // Filter
@@ -363,27 +367,34 @@ vscp_link_callback_send(const void *pdata, vscpEvent *pev)
     printf("Filtered out\n");
     return VSCP_ERROR_SUCCESS; // Filter out == OK
   }
-
+printf("Callback send 3\n");
   // Update send statistics
   pctx->statistics.cntTransmitFrames++;
   pctx->statistics.cntTransmitData += pev->sizeData;
 
-  if (pdTRUE == xSemaphoreTake(g_queueDroplet, (TickType_t) 10)) {
-    if (pdTRUE != xQueueSend(g_queueDroplet, &pev, 0)) {
-      pctx->statistics.cntOverruns++;
-      xSemaphoreGive(g_queueDroplet);
-      return VSCP_ERROR_TRM_FULL;
-    }
-    xSemaphoreGive(g_queueDroplet);
-  }
-  else {
-    ESP_LOGW(TAG, "Unable to get mutex for droplet queue");
+  // if (pdTRUE == xSemaphoreTake(g_queueDroplet, (TickType_t) 10)) {
+  //   if (pdTRUE != xQueueSend(g_queueDroplet, &pev, 0)) {
+  //     pctx->statistics.cntOverruns++;
+  //     xSemaphoreGive(g_queueDroplet);
+  //     return VSCP_ERROR_TRM_FULL;
+  //   }
+  //   xSemaphoreGive(g_queueDroplet);
+  // }
+  // else {
+  //   ESP_LOGW(TAG, "Unable to get mutex for droplet queue");
+  // }
+
+  if ( ESP_OK != (ret = droplet_sendEvent( pev, 100))) {
+    ESP_LOGE(TAG, "Failed to send event. rv = %d", ret);
+    return VSCP_ERROR_ERROR;
   }
 
-  if (pdTRUE == xSemaphoreTake(g_droplet_send_lock, pdMS_TO_TICKS(10))) {
+  printf("sent 4\n");
+
+  // if (pdTRUE == xSemaphoreTake(g_droplet_send_lock, pdMS_TO_TICKS(10))) {
     
-    xSemaphoreGive(g_droplet_send_lock);
-  }
+  //   xSemaphoreGive(g_droplet_send_lock);
+  // }
 
   // We own the event from now on and must
   // delete it and it's data when we are done
