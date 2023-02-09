@@ -91,50 +91,6 @@ extern const uint8_t mqtt_eclipse_io_pem_end[] asm("_binary_mqtt_eclipse_io_pem_
 //   ESP_LOGI(TAG, "binary sent with msg_id=%d", msg_id);
 // }
 
-//////////////////////////////////////////////////////////////////////////////
-// strsubst
-//
-// Substitute string occurrences in string
-//
-
-static char *
-strsubst(char *pNewStr, size_t len, const char *pStr, const char *pTarget, const char *pReplace)
-{
-  char *p = pStr;
-  char *pLast = pStr;
-
-  // Check pointers
-  if ((NULL == pNewStr) || (NULL == pStr) || (NULL == pTarget) || (NULL == pReplace)) {
-    return NULL;
-  }
-
-  memset(pNewStr, 0, len);
-  while (*p && (NULL != (p = strstr(p, pTarget)))) {
-    
-    // Copy first part to string
-    strncat(pNewStr, pLast, p-pLast);
-    
-    // Point beyond taget
-    p += strlen(pTarget);
-
-    // Target has to fit
-    if (strlen(pNewStr) + strlen(pTarget) > (len - 1)) {
-      return NULL;
-    }
-    // Copy in target
-    strcat(pNewStr, pReplace);
-
-    // Save last p
-    pLast = p;
-  }
-
-  if (*pLast && (strlen(pLast) <= (len - 1))) {
-    strcat(pNewStr, pLast);
-  }
-
-  return pNewStr;
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 // mqtt_send_vscp_event
 //
@@ -162,7 +118,7 @@ mqtt_send_vscp_event(const char *topic, const vscpEvent *pev)
     return VSCP_ERROR_MEMORY;
   }
 
-  if (VSCP_ERROR_SUCCESS != (rv = /*vscp_fwhlp_create_json*/ droplet_create_vscp_json(pbuf, 2048, pev))) {
+  if (VSCP_ERROR_SUCCESS != (rv = vscp_fwhlp_create_json(pbuf, 2048, pev))) {
     VSCP_FREE(pbuf);
     ESP_LOGE(TAG, "Failed to convert event to JSON rv = %d", rv);
     return rv;
@@ -184,42 +140,36 @@ mqtt_send_vscp_event(const char *topic, const vscpEvent *pev)
     vscp/{{guid}}/{{class}}/{{type}}/{{index}}
   */
 
-  char newTopic[128],saveTopic[128], workbuf[48];
+  char newTopic[128], saveTopic[128], workbuf[48];
 
   // Node name
-  strsubst(newTopic, sizeof(newTopic), pTopic, "{{node}}", g_persistent.nodeName);
+  vscp_fwhlp_strsubst(newTopic, sizeof(newTopic), pTopic, "{{node}}", g_persistent.nodeName);
   strcpy(saveTopic, newTopic);
-  ESP_LOGI(TAG, "New topic %s", newTopic);
 
   // GUID
   vscp_fwhlp_writeGuidToString(workbuf, g_persistent.nodeGuid);
-  strsubst(newTopic, sizeof(newTopic), saveTopic, "{{guid}}", workbuf);
+  vscp_fwhlp_strsubst(newTopic, sizeof(newTopic), saveTopic, "{{guid}}", workbuf);
   strcpy(saveTopic, newTopic);
-  ESP_LOGI(TAG, "New topic %s", newTopic);
 
   // GUID
   vscp_fwhlp_writeGuidToString(workbuf, pev->GUID);
-  strsubst(newTopic, sizeof(newTopic), saveTopic, "{{evguid}}", workbuf);
+  vscp_fwhlp_strsubst(newTopic, sizeof(newTopic), saveTopic, "{{evguid}}", workbuf);
   strcpy(saveTopic, newTopic);
-  ESP_LOGI(TAG, "New topic %s", newTopic);
 
   // Class
   sprintf(workbuf, "%d", pev->vscp_class);
-  strsubst(newTopic, sizeof(newTopic), saveTopic, "{{class}}", workbuf);
+  vscp_fwhlp_strsubst(newTopic, sizeof(newTopic), saveTopic, "{{class}}", workbuf);
   strcpy(saveTopic, newTopic);
-  ESP_LOGI(TAG, "New topic %s", newTopic);
 
   // Type
   sprintf(workbuf, "%d", pev->vscp_type);
-  strsubst(newTopic, sizeof(newTopic), saveTopic, "{{type}}", workbuf);
+  vscp_fwhlp_strsubst(newTopic, sizeof(newTopic), saveTopic, "{{type}}", workbuf);
   strcpy(saveTopic, newTopic);
-  ESP_LOGI(TAG, "New topic %s", newTopic);
 
   // nickname
   sprintf(workbuf, "%d", ((pev->GUID[14] << 8) + (pev->GUID[15])));
-  strsubst(newTopic, sizeof(newTopic), saveTopic, "{{nickname}}", workbuf);
+  vscp_fwhlp_strsubst(newTopic, sizeof(newTopic), saveTopic, "{{nickname}}", workbuf);
   strcpy(saveTopic, newTopic);
-  ESP_LOGI(TAG, "New topic %s", newTopic);
 
   // sensor index
   if (VSCP_ERROR_SUCCESS == vscp_fwhlp_isMeasurement(pev)) {
@@ -228,13 +178,22 @@ mqtt_send_vscp_event(const char *topic, const vscpEvent *pev)
   else {
     memset(workbuf, 0, sizeof(workbuf));
   }
-  strsubst(newTopic, sizeof(newTopic), saveTopic, "{{sindex}}", workbuf);
+  vscp_fwhlp_strsubst(newTopic, sizeof(newTopic), saveTopic, "{{sindex}}", workbuf);
   strcpy(saveTopic, newTopic);
   ESP_LOGI(TAG, "New topic %s", newTopic);
 
-  int msg_id =
-    esp_mqtt_client_publish(g_mqtt_client, pTopic, pbuf, strlen(pbuf), g_persistent.mqttQos, g_persistent.mqttRetain);
-  ESP_LOGI(TAG, "Published VSCP event to MQTT broker with msg_id=%d topic=%s", msg_id, pTopic);
+  // int msg_id =
+  //   esp_mqtt_client_publish(g_mqtt_client, newTopic, pbuf, strlen(pbuf), g_persistent.mqttQos, g_persistent.mqttRetain);
+  // ESP_LOGI(TAG, "Published VSCP event to MQTT broker with msg_id=%d topic=%s", msg_id, newTopic);
+
+  int msgid = 
+  esp_mqtt_client_enqueue(g_mqtt_client, newTopic, pbuf, strlen(pbuf), g_persistent.mqttQos, g_persistent.mqttRetain, true);
+  if (-1 == msgid) {
+    ESP_LOGE(TAG, "Failed to publish MQTT message. id=%d", msgid);
+  }
+  else {
+    ESP_LOGI(TAG, "Published MQTT message. id=%d", msgid);
+  }
 
   VSCP_FREE(pbuf);
 
@@ -339,24 +298,47 @@ mqtt_start(void)
   // Set client id from mac
   uint8_t mac[8];
   ESP_ERROR_CHECK(esp_base_mac_addr_get(mac));
-  char client_id[64];
-  sprintf(client_id, "alpha-%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-  // printf("client_id=[%s]\n", client_id);
 
+  /*
+    {{node}}        - Node name
+    {{guid}}        - Node GUID
+
+    Typical client
+    {{node}}-{{guid}}
+  */
+
+  char clientid[128], save[128], workbuf[48];
+
+  // Node name
+  vscp_fwhlp_strsubst(clientid, sizeof(clientid), g_persistent.mqttClientid, "{{node}}", g_persistent.nodeName);
+  strcpy(save, clientid);
+
+  // GUID
+  vscp_fwhlp_writeGuidToString(workbuf, g_persistent.nodeGuid);
+  vscp_fwhlp_strsubst(clientid, sizeof(clientid), save, "{{guid}}", workbuf);
+
+  char uri[64];
+  sprintf(uri, "mqtt://%s:%d", g_persistent.mqttUrl, g_persistent.mqttPort);
+
+  // clang-format off
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
   const esp_mqtt_client_config_t mqtt_cfg = {
-    .broker                              = { .address.uri = "mqtt://192.168.1.7:1883", .address.port = 1883,
-                                             /*.verification.certificate = (const char *) mqtt_eclipse_io_pem_start*/ },
-    .credentials.username                = "vscp",
-    .credentials.client_id               = client_id,
-    .credentials.authentication.password = "secret",
+    .broker = { 
+                .address.uri = uri,                     // "mqtt://192.168.1.7:1883", 
+                .address.port = g_persistent.mqttPort,  // 1883,
+                /*.verification.certificate = (const char *) mqtt_eclipse_io_pem_start*/ 
+              },    
+    .credentials.client_id               = clientid,
+    .credentials.username                = g_persistent.mqttUsername,
+    .credentials.authentication.password = g_persistent.mqttPassword,
   };
 #else
   esp_mqtt_client_config_t mqtt_cfg = {
-    .uri          = "mqtt://192.168.1.7:1883",
+    .uri          = uri; // "mqtt://192.168.1.7:1883",
     .event_handle = mqtt_event_handler,
-    .client_id    = client_id
+    .client_id    = clientid
 #endif
+  // clang-format on
 
   ESP_LOGI(TAG, "[APP] Free memory: %lu bytes", esp_get_free_heap_size());
   g_mqtt_client = esp_mqtt_client_init(&mqtt_cfg);

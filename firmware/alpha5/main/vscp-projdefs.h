@@ -14,7 +14,7 @@
 // ----------------------------------------------------------------------------
 
 #define VSCP_FWHLP_CRYPTO_SUPPORT   // AES crypto support
-//#define VSCP_FWHLP_JSON_SUPPORT     // Enable JSON support (Need cJSON lib)
+#define VSCP_FWHLP_JSON_SUPPORT     // Enable JSON support (Need cJSON lib)
 
 // ----------------------------------------------------------------------------
 

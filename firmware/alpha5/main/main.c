@@ -233,7 +233,7 @@ node_persistent_config_t g_persistent = {
   .mqttEnable = true,
   .mqttUrl      = { 0 },
   .mqttPort     = 1883,
-  .mqttClientid = "123",
+  .mqttClientid = "{{node}}-{{guid}}",
   .mqttUsername = "vscp",
   .mqttPassword = "secret",
   .mqttQos          = 0,
@@ -321,6 +321,9 @@ droplet_receive_cb(const vscpEvent *pev, void *userdata)
     if (VSCP_ERROR_SUCCESS != (rv = tcpsrv_sendEventExToAllClients(pev))) {
       if (VSCP_ERROR_TRM_FULL == rv) {
         ESP_LOGI(TAG, "Failed to send event to tcpipsrv (queue is full for client)");
+      }
+      else if (VSCP_ERROR_TIMEOUT == rv) {
+        ESP_LOGI(TAG, "Failed to send event to tcpipsrv (Unable to get mutex)");
       }
       else {
         ESP_LOGE(TAG, "Failed to send event to tcpipsrv rv=%d", rv);

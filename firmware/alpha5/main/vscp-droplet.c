@@ -1444,6 +1444,7 @@ droplet_sendEventEx(vscpEventEx *pex, uint32_t wait_ms)
 }
 */
 
+/*
 int
 droplet_parse_vscp_json(vscpEvent *pev, const char *jsonVscpEventObj)
 {
@@ -1516,6 +1517,7 @@ droplet_parse_vscp_json(vscpEvent *pev, const char *jsonVscpEventObj)
   cJSON_Delete(root);
   return VSCP_ERROR_SUCCESS;
 }
+*/
 
 ///////////////////////////////////////////////////////////////////////////////
 // droplet_create_vscp_json
@@ -1523,6 +1525,7 @@ droplet_parse_vscp_json(vscpEvent *pev, const char *jsonVscpEventObj)
 // https://github.com/nopnop2002/esp-idf-json
 //
 
+/*
 int
 droplet_create_vscp_json(char *strObj, size_t len, vscpEvent *pev)
 {
@@ -1572,3 +1575,4 @@ droplet_create_vscp_json(char *strObj, size_t len, vscpEvent *pev)
 
   return VSCP_ERROR_SUCCESS;
 }
+*/

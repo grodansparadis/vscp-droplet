@@ -178,7 +178,7 @@ typedef struct {
   bool mqttEnable;
   char mqttUrl[32];
   uint16_t mqttPort;
-  char mqttClientid[32];
+  char mqttClientid[64];
   char mqttUsername[32];
   char mqttPassword[32];
   int mqttQos;

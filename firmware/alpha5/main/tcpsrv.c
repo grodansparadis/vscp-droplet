@@ -132,18 +132,18 @@ tcpsrv_sendEventExToAllClients(const vscpEvent *pev)
         return VSCP_ERROR_MEMORY;
       }
       else {
-        if (pdTRUE == xSemaphoreTake(g_ctx[i].mutexQueue, 0)) {
+        if (pdTRUE == xSemaphoreTake(g_ctx[i].mutexQueue, 10 / portTICK_PERIOD_MS)) {
           if (pdTRUE != xQueueSend(g_ctx[i].queueClient, &(pev), 0)) {
             xSemaphoreGive(g_ctx[i].mutexQueue);
             vscp_fwhlp_deleteEvent(&pnew);
             g_ctx[i].statistics.cntOverruns++;
             ESP_LOGI(TAG, "Queue is full for client %d", i);
-            return VSCP_ERROR_TRM_FULL;   // yes, receive queue, but transmit for sender
+            return VSCP_ERROR_TRM_FULL; // yes, receive queue, but transmit for sender
           }
           xSemaphoreGive(g_ctx[i].mutexQueue);
         }
         else {
-          ESP_LOGE(TAG, "Mutex timeout for client %d", i);
+          ESP_LOGI(TAG, "Mutex timeout for client %d", i);
           return VSCP_ERROR_TIMEOUT;
         }
       }
@@ -206,7 +206,7 @@ client_task(void *pvParameters)
   ESP_LOGI(TAG, "Client worker socket=%d id=%d", pctx->sock, pctx->id);
 
   // Greet client
-  //send(pctx->sock, TCPSRV_WELCOME_MSG, sizeof(TCPSRV_WELCOME_MSG), 0);
+  // send(pctx->sock, TCPSRV_WELCOME_MSG, sizeof(TCPSRV_WELCOME_MSG), 0);
   vscp_link_callback_welcome(pctx);
 
   // Another client
@@ -216,12 +216,12 @@ client_task(void *pvParameters)
     len = (rv = recv(pctx->sock, pctx->buf + pctx->size, (sizeof(pctx->buf) - pctx->size) - 1, MSG_DONTWAIT));
     if ((rv < 0)) {
       // If nothing to read do idle work
-      if ( errno == EAGAIN) {
+      if (errno == EAGAIN) {
         // Handle rcvloop etc
         vscp_link_idle_worker(pctx);
         continue;
       }
-      ESP_LOGE(TAG, "Error occurred during receiving: rv=%d, errno=%d", rv, errno);      
+      ESP_LOGE(TAG, "Error occurred during receiving: rv=%d, errno=%d", rv, errno);
       memset(pctx->buf, 0, sizeof(pctx->buf));
       pctx->size = 0;
       close(pctx->sock);
@@ -269,8 +269,8 @@ client_task(void *pvParameters)
 
       // Get event from out fifo to feed to
       // protocol handler etc
-      vscpEvent *pev = NULL;
-      // if (pdTRUE == xSemaphoreTake(pctx->mutexQueue, (TickType_t) 0)) {
+      // vscpEvent *pev = NULL;
+      // if (pdTRUE == xSemaphoreTake(pctx->mutexQueue, (TickType_t) 10/ portTICK_PERIOD_MS)) {
       //   if (pdTRUE != xQueueReceive(pctx->queueClient, &pev, 0)) {
       //     pev = NULL;
       //   }
@@ -286,9 +286,9 @@ client_task(void *pvParameters)
       // freeing the event
 
       // Do protocol work here
-      if (NULL != pev) {
-        //vscp2_do_work(pev);
-      }
+      // if (NULL != pev) {
+      //  vscp2_do_work(pev);
+      //}
 
       // Handle rcvloop etc
       vscp_link_idle_worker(pctx);
@@ -297,6 +297,18 @@ client_task(void *pvParameters)
 
   // Mark transport channel as closed
   g_tr_tcpsrv[pctx->id].open = false;
+
+  vscpEvent *pev;
+  if (pdTRUE == xSemaphoreTake(pctx->mutexQueue, 5000 / portTICK_PERIOD_MS)) {
+
+    while (pdTRUE == xQueueReceive(pctx->queueClient, &(pev), 0)) {
+      vscp_fwhlp_deleteEvent(&pev);
+    }
+    xSemaphoreGive(pctx->mutexQueue);
+  }
+  else {
+    ESP_LOGE(TAG, "Could not empty input queue on close (mutex)");
+  }
 
   // Empty the queue
   xQueueReset(g_tr_tcpsrv[pctx->id].msg_queue);
@@ -433,7 +445,7 @@ tcpsrv_task(void *pvParameters)
       continue;
     }
 
-    // Start tgask 
+    // Start tgask
     for (int i = 0; i < MAX_TCP_CONNECTIONS; i++) {
       if (!g_ctx[i].sock) {
         g_ctx[i].sock = sock;

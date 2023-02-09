@@ -1646,8 +1646,14 @@ config_droplet_get_handler(httpd_req_t *req)
   sprintf(buf, "<div><form id=but3 class=\"button\" action='/docfgdroplet' method='get'><fieldset>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
+  // Enable
+  sprintf(buf, "<input type=\"checkbox\" name=\"enable\" value=\"true\" ");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "%s><label for=\"lr\"> Enable</label>", g_persistent.dropletEnable ? "checked" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
   // Long range
-  sprintf(buf, "<input type=\"checkbox\" name=\"lr\" value=\"true\" ");
+  sprintf(buf, "<br><input type=\"checkbox\" name=\"lr\" value=\"true\" ");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
   sprintf(buf, "%s><label for=\"lr\"> Enable Long Range</label>", g_persistent.dropletLongRange ? "checked" : "");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
@@ -1751,6 +1757,17 @@ do_config_droplet_get_handler(httpd_req_t *req)
       if (NULL == param) {
         return ESP_ERR_ESPNOW_NO_MEM;
         free(buf);
+      }
+
+      // Enable
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "enable", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found query parameter => enable=%s", param);
+        if (NULL != strstr(param, "true")) {
+          g_persistent.dropletEnable = true;
+        }
+      }
+      else {
+        g_persistent.dropletEnable = false;
       }
 
       // Long range
@@ -1947,9 +1964,11 @@ config_vscplink_get_handler(httpd_req_t *req)
   // Get application info data
   const esp_app_desc_t *appDescr = esp_app_get_description();
 
+  
+
   // Get header value string length and allocate memory for length + 1,
   // extra byte for null termination
-  req_buf_len = httpd_req_get_hdr_value_len(req, "Host") + 1;
+  req_buf_len = httpd_req_get_hdr_value_len(req, "Name") + 1;
   if (req_buf_len > 1) {
     req_buf = malloc(req_buf_len);
     // Copy null terminated value string into buffer
@@ -1965,8 +1984,14 @@ config_vscplink_get_handler(httpd_req_t *req)
   sprintf(buf, "<div><form id=but3 class=\"button\" action='/docfgvscplink' method='get'><fieldset>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
+  // Enable
+  sprintf(buf, "<input type=\"checkbox\" name=\"enable\" value=\"true\" ");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "%s><label for=\"lr\"> Enable</label>", g_persistent.vscplinkEnable ? "checked" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
   sprintf(buf,
-          "Host (leave blank to disable):<input type=\"text\" name=\"url\" value=\"%s\" >",
+          "<br><br>Host:<input type=\"text\" name=\"url\" value=\"%s\" >",
           g_persistent.vscplinkUrl);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
@@ -2025,6 +2050,17 @@ do_config_vscplink_get_handler(httpd_req_t *req)
         free(buf);
       }
 
+      // Enable
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "enable", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found query parameter => enable=%s", param);
+        if (NULL != strstr(param, "true")) {
+          g_persistent.vscplinkEnable = true;
+        }
+      }
+      else {
+        g_persistent.vscplinkEnable = false;
+      }
+
       // url
       if (ESP_OK == (rv = httpd_query_key_value(buf, "url", param, WEBPAGE_PARAM_SIZE))) {
         ESP_LOGI(TAG, "Found query parameter => url=%s", param);
@@ -2055,8 +2091,14 @@ do_config_vscplink_get_handler(httpd_req_t *req)
 
       // username
       if (ESP_OK == (rv = httpd_query_key_value(buf, "user", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found query parameter => user=%s", param);
-        strncpy(g_persistent.vscplinkUsername, param, sizeof(g_persistent.vscplinkUsername) - 1);
+        char *pdecoded = urlDecode(param);
+        if (NULL == pdecoded) {
+          free(param);
+          free(buf);
+          return ESP_ERR_ESPNOW_NO_MEM;
+        }
+        ESP_LOGI(TAG, "Found query parameter => user=%s", pdecoded);
+        strncpy(g_persistent.vscplinkUsername, pdecoded, sizeof(g_persistent.vscplinkUsername) - 1);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "vscp_user", g_persistent.vscplinkUsername);
         if (rv != ESP_OK) {
@@ -2069,8 +2111,14 @@ do_config_vscplink_get_handler(httpd_req_t *req)
 
       // password
       if (ESP_OK == (rv = httpd_query_key_value(buf, "password", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found query parameter => password=%s", param);
-        strncpy(g_persistent.vscplinkPassword, param, sizeof(g_persistent.vscplinkPassword) - 1);
+        char *pdecoded = urlDecode(param);
+        if (NULL == pdecoded) {
+          free(param);
+          free(buf);
+          return ESP_ERR_ESPNOW_NO_MEM;
+        }
+        ESP_LOGI(TAG, "Found query parameter => password=%s", pdecoded);
+        strncpy(g_persistent.vscplinkPassword, pdecoded, sizeof(g_persistent.vscplinkPassword) - 1);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "vscp_password", g_persistent.vscplinkPassword);
         if (rv != ESP_OK) {
@@ -2157,7 +2205,13 @@ config_mqtt_get_handler(httpd_req_t *req)
   sprintf(buf, "<div><form id=but3 class=\"button\" action='/docfgmqtt' method='get'><fieldset>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  sprintf(buf, "Host (leave blank to disable):<input type=\"text\" name=\"url\" value=\"%s\" >", g_persistent.mqttUrl);
+  // Enable
+  sprintf(buf, "<input type=\"checkbox\" name=\"enable\" value=\"true\" ");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "%s><label for=\"lr\"> Enable</label>", g_persistent.mqttEnable ? "checked" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf, "<br><br>Host:<input type=\"text\" name=\"url\" value=\"%s\" >", g_persistent.mqttUrl);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
   sprintf(buf, "Port:<input type=\"text\" name=\"port\" value=\"%d\" >", g_persistent.mqttPort);
@@ -2216,6 +2270,17 @@ do_config_mqtt_get_handler(httpd_req_t *req)
         free(buf);
       }
 
+      // Enable
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "enable", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found query parameter => enable=%s", param);
+        if (NULL != strstr(param, "true")) {
+          g_persistent.mqttEnable = true;
+        }
+      }
+      else {
+        g_persistent.mqttEnable = false;
+      }
+
       // url
       if (ESP_OK == (rv = httpd_query_key_value(buf, "url", param, WEBPAGE_PARAM_SIZE))) {
         char *pdecoded = urlDecode(param);
@@ -2253,8 +2318,14 @@ do_config_mqtt_get_handler(httpd_req_t *req)
 
       // clientid
       if (ESP_OK == (rv = httpd_query_key_value(buf, "client", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found query parameter => clientid=%s", param);
-        strncpy(g_persistent.mqttClientid, param, sizeof(g_persistent.mqttClientid) - 1);
+        char *pdecoded = urlDecode(param);
+        if (NULL == pdecoded) {
+          free(param);
+          free(buf);
+          return ESP_ERR_ESPNOW_NO_MEM;
+        }
+        ESP_LOGI(TAG, "Found query parameter => clientid=%s", pdecoded);
+        strncpy(g_persistent.mqttClientid, pdecoded, sizeof(g_persistent.mqttClientid) - 1);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "mqtt_cid", g_persistent.mqttClientid);
         if (rv != ESP_OK) {
@@ -2267,8 +2338,14 @@ do_config_mqtt_get_handler(httpd_req_t *req)
 
       // user
       if (ESP_OK == (rv = httpd_query_key_value(buf, "user", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found query parameter => user=%s", param);
-        strncpy(g_persistent.mqttUsername, param, sizeof(g_persistent.mqttUsername) - 1);
+        char *pdecoded = urlDecode(param);
+        if (NULL == pdecoded) {
+          free(param);
+          free(buf);
+          return ESP_ERR_ESPNOW_NO_MEM;
+        }
+        ESP_LOGI(TAG, "Found query parameter => user=%s", pdecoded);
+        strncpy(g_persistent.mqttUsername, pdecoded, sizeof(g_persistent.mqttUsername) - 1);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "mqtt_user", g_persistent.mqttUsername);
         if (rv != ESP_OK) {
@@ -2281,8 +2358,14 @@ do_config_mqtt_get_handler(httpd_req_t *req)
 
       // password
       if (ESP_OK == (rv = httpd_query_key_value(buf, "password", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found query parameter => password=%s", param);
-        strncpy(g_persistent.mqttPassword, param, sizeof(g_persistent.mqttPassword) - 1);
+        char *pdecoded = urlDecode(param);
+        if (NULL == pdecoded) {
+          free(param);
+          free(buf);
+          return ESP_ERR_ESPNOW_NO_MEM;
+        }
+        ESP_LOGI(TAG, "Found query parameter => password=%s", pdecoded);
+        strncpy(g_persistent.mqttPassword, pdecoded, sizeof(g_persistent.mqttPassword) - 1);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "mqtt_password", g_persistent.mqttPassword);
         if (rv != ESP_OK) {
@@ -2385,6 +2468,7 @@ config_web_get_handler(httpd_req_t *req)
   // Get application info data
   const esp_app_desc_t *appDescr = esp_app_get_description();
 
+
   // Get header value string length and allocate memory for length + 1,
   // extra byte for null termination
   req_buf_len = httpd_req_get_hdr_value_len(req, "Host") + 1;
@@ -2403,7 +2487,13 @@ config_web_get_handler(httpd_req_t *req)
   sprintf(buf, "<div><form id=but3 class=\"button\" action='/docfgweb' method='get'><fieldset>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  sprintf(buf, "Port:<input type=\"text\" name=\"port\" value=\"%d\" >", g_persistent.webPort);
+   // Enable
+  sprintf(buf, "<input type=\"checkbox\" name=\"enable\" value=\"true\" ");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+  sprintf(buf, "%s><label for=\"lr\"> Enable</label>", g_persistent.webEnable ? "checked" : "");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf, "<br><br>Port:<input type=\"text\" name=\"port\" value=\"%d\" >", g_persistent.webPort);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
   sprintf(buf, "Username:<input type=\"text\" name=\"user\" value=\"%s\" >", g_persistent.webUsername);
@@ -2450,6 +2540,17 @@ do_config_web_get_handler(httpd_req_t *req)
         free(buf);
       }
 
+      // Enable
+      if (ESP_OK == (rv = httpd_query_key_value(buf, "enable", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found query parameter => enable=%s", param);
+        if (NULL != strstr(param, "true")) {
+          g_persistent.webEnable = true;
+        }
+      }
+      else {
+        g_persistent.webEnable = false;
+      }
+
       // port
       if (ESP_OK == (rv = httpd_query_key_value(buf, "port", param, WEBPAGE_PARAM_SIZE))) {
         ESP_LOGI(TAG, "Found query parameter => port=%s", param);
@@ -2466,8 +2567,14 @@ do_config_web_get_handler(httpd_req_t *req)
 
       // user
       if (ESP_OK == (rv = httpd_query_key_value(buf, "user", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found query parameter => user=%s", param);
-        strncpy(g_persistent.webUsername, param, sizeof(g_persistent.webUsername) - 1);
+        char *pdecoded = urlDecode(param);
+        if (NULL == pdecoded) {
+          free(param);
+          free(buf);
+          return ESP_ERR_ESPNOW_NO_MEM;
+        }
+        ESP_LOGI(TAG, "Found query parameter => user=%s", pdecoded);
+        strncpy(g_persistent.webUsername, pdecoded, sizeof(g_persistent.webUsername) - 1);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "web_user", g_persistent.webUsername);
         if (rv != ESP_OK) {
@@ -2480,8 +2587,14 @@ do_config_web_get_handler(httpd_req_t *req)
 
       // password
       if (ESP_OK == (rv = httpd_query_key_value(buf, "password", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found query parameter => password=%s", param);
-        strncpy(g_persistent.webPassword, param, sizeof(g_persistent.webPassword) - 1);
+        char *pdecoded = urlDecode(param);
+        if (NULL == pdecoded) {
+          free(param);
+          free(buf);
+          return ESP_ERR_ESPNOW_NO_MEM;
+        }
+        ESP_LOGI(TAG, "Found query parameter => password=%s", pdecoded);
+        strncpy(g_persistent.webPassword, pdecoded, sizeof(g_persistent.webPassword) - 1);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "web_password", g_persistent.webPassword);
         if (rv != ESP_OK) {

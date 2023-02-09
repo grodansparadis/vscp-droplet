@@ -403,7 +403,7 @@ vscp_link_callback_chkData(const void *pdata, uint16_t *pcount)
   }
 
   vscpctx_t *pctx = (vscpctx_t *) pdata;
-  *pcount = uxQueueMessagesWaiting(pctx->queueClient);
+  *pcount         = uxQueueMessagesWaiting(pctx->queueClient);
 
   return VSCP_ERROR_SUCCESS;
 }
@@ -421,7 +421,7 @@ vscp_link_callback_retr(const void *pdata, vscpEvent **pev)
 
   vscpctx_t *pctx = (vscpctx_t *) pdata;
 
-  if (pdTRUE == xSemaphoreTake(pctx->mutexQueue, 0)) {
+  if (pdTRUE == xSemaphoreTake(pctx->mutexQueue, 10 / portTICK_PERIOD_MS)) {
     if (pdTRUE != xQueueReceive(pctx->queueClient, pev, 0)) {
       xSemaphoreGive(pctx->mutexQueue);
       return VSCP_ERROR_RCV_EMPTY; // Yes receive
@@ -489,7 +489,7 @@ vscp_link_callback_clrAll(const void *pdata)
   vscpctx_t *pctx = (vscpctx_t *) pdata;
 
   vscpEvent *pev;
-  if (pdTRUE == xSemaphoreTake(pctx->mutexQueue, 0)) {
+  if (pdTRUE == xSemaphoreTake(pctx->mutexQueue, 10 / portTICK_PERIOD_MS)) {
 
     while (pdTRUE == xQueueReceive(pctx->queueClient, &(pev), 0)) {
       vscp_fwhlp_deleteEvent(&pev);
