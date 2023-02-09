@@ -72,8 +72,8 @@
 #define KEEPALIVE_COUNT    3 // Keep-alive probe packet retry count.
 
 // Global stuff
-// extern transport_t tr_twai_rx;
 extern transport_t g_tr_tcpsrv[MAX_TCP_CONNECTIONS];
+
 static const char *TAG    = "tcpsrv";
 static uint8_t cntClients = 0; // Holds current number of clients
 
@@ -83,10 +83,10 @@ static uint8_t cntClients = 0; // Holds current number of clients
   VSCP droplet handler. The queue is shared with
   other event receivers like MQTT.
 */
-QueueHandle_t g_queueDroplet = NULL;
+// QueueHandle_t g_queueDroplet = NULL;
 
 // Mutex that protect the droplet queue
-SemaphoreHandle_t g_mutexQueueDroplet;
+// SemaphoreHandle_t g_mutexQueueDroplet;
 
 /*!
   This is the socket context for open channels. It holds all
@@ -96,40 +96,11 @@ SemaphoreHandle_t g_mutexQueueDroplet;
 static vscpctx_t g_ctx[MAX_TCP_CONNECTIONS]; // Socket context
 
 ///////////////////////////////////////////////////////////////////////////////
-// sendEventExToAll
-//
-
-// int
-// sendEventExToAll(vscpEvent *pev)
-// {
-//   for (int i = 0; i < MAX_TCP_CONNECTIONS; i++) {
-//     if (g_ctx[i].sock != i) {
-//       vscpEvent *pnew = vscp_fwhlp_mkEventCopy(pev);
-//       if (NULL == pnew) {
-//         vscp_fwhlp_deleteEvent(&pnew);
-//         vscp_fwhlp_deleteEvent(&pev);
-//         return VSCP_ERROR_MEMORY;
-//       }
-//       else {
-//         if (pdTRUE != xQueueSend(g_ctx[i].queueClient, &(pev), 0)) {
-//           vscp_fwhlp_deleteEvent(&pnew);
-//           vscp_fwhlp_deleteEvent(&pev);
-//           g_ctx[i].statistics.cntOverruns++;
-//           return VSCP_ERROR_TRM_FULL;
-//         }
-//       }
-//     }
-//   }
-
-//   return VSCP_ERROR_SUCCESS;
-// }
-
-///////////////////////////////////////////////////////////////////////////////
-// setContextDefaults
+// tcpsrv_setContextDefaults
 //
 
 void
-setContextDefaults(vscpctx_t *pctx)
+tcpsrv_setContextDefaults(vscpctx_t *pctx)
 {
   pctx->sock              = 0;
   pctx->bValidated        = 0;
@@ -143,6 +114,43 @@ setContextDefaults(vscpctx_t *pctx)
   memset(&pctx->filter, 0, sizeof(vscpEventFilter));
   memset(&pctx->statistics, 0, sizeof(VSCPStatistics));
   memset(&pctx->status, 0, sizeof(VSCPStatus));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// tcpsrv_sendEventExToAllClients
+//
+
+int
+tcpsrv_sendEventExToAllClients(const vscpEvent *pev)
+{
+  for (int i = 0; i < MAX_TCP_CONNECTIONS; i++) {
+    if (g_ctx[i].sock && (NULL != g_ctx[i].queueClient)) {
+      vscpEvent *pnew = vscp_fwhlp_mkEventCopy(pev);
+      if (NULL == pnew) {
+        vscp_fwhlp_deleteEvent(&pnew);
+        ESP_LOGE(TAG, "Unable to allocate memory for event for client %d", i);
+        return VSCP_ERROR_MEMORY;
+      }
+      else {
+        if (pdTRUE == xSemaphoreTake(g_ctx[i].mutexQueue, 0)) {
+          if (pdTRUE != xQueueSend(g_ctx[i].queueClient, &(pev), 0)) {
+            xSemaphoreGive(g_ctx[i].mutexQueue);
+            vscp_fwhlp_deleteEvent(&pnew);
+            g_ctx[i].statistics.cntOverruns++;
+            ESP_LOGI(TAG, "Queue is full for client %d", i);
+            return VSCP_ERROR_TRM_FULL;   // yes, receive queue, but transmit for sender
+          }
+          xSemaphoreGive(g_ctx[i].mutexQueue);
+        }
+        else {
+          ESP_LOGE(TAG, "Mutex timeout for client %d", i);
+          return VSCP_ERROR_TIMEOUT;
+        }
+      }
+    }
+  }
+
+  return VSCP_ERROR_SUCCESS;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -190,7 +198,6 @@ client_task(void *pvParameters)
 {
   int rv;
   size_t len;
-  char *p;
   vscpctx_t *pctx = (vscpctx_t *) pvParameters;
 
   // Mark transport channel as open
@@ -199,15 +206,22 @@ client_task(void *pvParameters)
   ESP_LOGI(TAG, "Client worker socket=%d id=%d", pctx->sock, pctx->id);
 
   // Greet client
-  send(pctx->sock, TCPSRV_WELCOME_MSG, sizeof(TCPSRV_WELCOME_MSG), 0);
+  //send(pctx->sock, TCPSRV_WELCOME_MSG, sizeof(TCPSRV_WELCOME_MSG), 0);
+  vscp_link_callback_welcome(pctx);
 
   // Another client
   cntClients++;
 
   do {
-    len = (rv = recv(pctx->sock, pctx->buf + pctx->size, (sizeof(pctx->buf) - pctx->size) - 1, 0));
-    if (rv < 0) {
-      ESP_LOGE(TAG, "Error occurred during receiving: rv=%d, errno=%d", rv, errno);
+    len = (rv = recv(pctx->sock, pctx->buf + pctx->size, (sizeof(pctx->buf) - pctx->size) - 1, MSG_DONTWAIT));
+    if ((rv < 0)) {
+      // If nothing to read do idle work
+      if ( errno == EAGAIN) {
+        // Handle rcvloop etc
+        vscp_link_idle_worker(pctx);
+        continue;
+      }
+      ESP_LOGE(TAG, "Error occurred during receiving: rv=%d, errno=%d", rv, errno);      
       memset(pctx->buf, 0, sizeof(pctx->buf));
       pctx->size = 0;
       close(pctx->sock);
@@ -225,19 +239,16 @@ client_task(void *pvParameters)
       pctx->size += len;
       pctx->buf[pctx->size + 1] = 0;
 
-      //printf("pre len %d %d\n", len, pctx->size);
-
       // Parse VSCP command
       char *pnext = NULL;
       if (VSCP_ERROR_SUCCESS == vscp_link_parser(pctx, pctx->buf, &pnext)) {
-        // printf("Return\n");
+
         if ((NULL != pnext) && *pnext) {
           // printf("Copy [%s]\n", pnext);
           strncpy(pctx->buf, pnext, sizeof(pctx->buf));
           pctx->size = strlen(pctx->buf);
         }
         else {
-          // printf("Zero\n");
           memset(pctx->buf, 0, sizeof(pctx->buf));
           pctx->size = 0;
         }
@@ -259,15 +270,15 @@ client_task(void *pvParameters)
       // Get event from out fifo to feed to
       // protocol handler etc
       vscpEvent *pev = NULL;
-      if (pdTRUE == xSemaphoreTake(pctx->mutexQueue, (TickType_t) 10) ) {
-        if (pdTRUE != xQueueReceive(pctx->queueClient, &pev, 0)) {
-          pev = NULL;
-        }
-        xSemaphoreGive(pctx->mutexQueue);
-      }
-      else {
-        ESP_LOGW(TAG, "Unable to get mutex for client queue for client %d", pctx->id);
-      }
+      // if (pdTRUE == xSemaphoreTake(pctx->mutexQueue, (TickType_t) 0)) {
+      //   if (pdTRUE != xQueueReceive(pctx->queueClient, &pev, 0)) {
+      //     pev = NULL;
+      //   }
+      //   xSemaphoreGive(pctx->mutexQueue);
+      // }
+      // else {
+      //   ESP_LOGW(TAG, "Unable to get mutex for client queue for client %d", pctx->id);
+      // }
 
       // pev is NULL if no event is available here
       // The worker is still called.
@@ -276,7 +287,7 @@ client_task(void *pvParameters)
 
       // Do protocol work here
       if (NULL != pev) {
-        vscp2_do_work(pev);
+        //vscp2_do_work(pev);
       }
 
       // Handle rcvloop etc
@@ -298,7 +309,7 @@ client_task(void *pvParameters)
     close(pctx->sock);
   }
 
-  setContextDefaults(pctx);
+  tcpsrv_setContextDefaults(pctx);
 
   cntClients--;
   ESP_LOGI(TAG, "Number of clients %d.", cntClients);
@@ -322,10 +333,10 @@ tcpsrv_task(void *pvParameters)
   struct sockaddr_storage dest_addr;
   vscpEvent *pev;
 
-  g_mutexQueueDroplet = xSemaphoreCreateMutex();
+  // g_mutexQueueDroplet = xSemaphoreCreateMutex();
 
   // Initialize the input fifo
-  g_queueDroplet = xQueueCreate(DROPLET_QUEUE_SIZE, sizeof(pev));
+  // g_queueDroplet = xQueueCreate(DROPLET_QUEUE_SIZE, sizeof(pev));
 
   for (int i = 0; i < MAX_TCP_CONNECTIONS; i++) {
     g_ctx[i].id         = i;
@@ -338,7 +349,7 @@ tcpsrv_task(void *pvParameters)
     if (NULL == g_ctx[i].queueClient) {
       ESP_LOGE(TAG, "Failed to create client queue for client %d", i);
     }
-    setContextDefaults(&g_ctx[i]);
+    tcpsrv_setContextDefaults(&g_ctx[i]);
   }
 
   if (addr_family == AF_INET) {
@@ -422,6 +433,7 @@ tcpsrv_task(void *pvParameters)
       continue;
     }
 
+    // Start tgask 
     for (int i = 0; i < MAX_TCP_CONNECTIONS; i++) {
       if (!g_ctx[i].sock) {
         g_ctx[i].sock = sock;

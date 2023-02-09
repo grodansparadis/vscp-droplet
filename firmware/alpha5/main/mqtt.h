@@ -27,30 +27,45 @@
   SOFTWARE.
 */
 
-#ifndef  __DROPLET_MQTT__
+#ifndef __DROPLET_MQTT__
 #define __DROPLET_MQTT__
 
-#define DROPLET_MQTT_STATISTIC_PUBLISH_INTERVAL   60000
+#include <vscp.h>
+
+#define DROPLET_MQTT_STATISTIC_PUBLISH_INTERVAL 60000
 
 // Topics for send and receive statistics
-#define DROPLET_MQTT_TOPIC_STATS_RECV_CNT   "droplet/alpha/statistics/rcvcnt"
+#define DROPLET_MQTT_TOPIC_STATS_RECV_CNT "droplet/alpha/statistics/rcvcnt"
 #define DROPLET_MQTT_TOPIC_STATS_TX_CNT   "droplet/alpha/statistics/txcnt"
 
-
 /**
- * @brief 
- * 
+ * @fn mqtt_start
+ * @brief Start MQTT client
+ *
  */
 
 void
 mqtt_start(void);
 
 /**
- * @brief 
- * 
+ * @fn mqtt_stop
+ * @brief Stop MQTT client
+ *
  */
 
 void
 mqtt_stop(void);
+
+/**
+ * @fn mqtt_send_vscp_event
+ * @brief Send VSCP event on configured topic
+ * @param topic Topic to publish event on. 
+ *        If set to NULL configured topic will be used.
+ * @param pev Pointer to event to publish
+ * @return int VSCP_ERROR_SUCCESS if OK, else error code.
+ */
+
+int
+mqtt_send_vscp_event(const char *topic, const vscpEvent *pev);
 
 #endif

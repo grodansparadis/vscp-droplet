@@ -2218,8 +2218,15 @@ do_config_mqtt_get_handler(httpd_req_t *req)
 
       // url
       if (ESP_OK == (rv = httpd_query_key_value(buf, "url", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found query parameter => url=%s", param);
-        strncpy(g_persistent.mqttUrl, param, sizeof(g_persistent.mqttUrl) - 1);
+        char *pdecoded = urlDecode(param);
+        if (NULL == pdecoded) {
+          free(param);
+          free(buf);
+          return ESP_ERR_ESPNOW_NO_MEM;
+        }
+        ESP_LOGI(TAG, "Found query parameter => url=%s", pdecoded);
+        strncpy(g_persistent.mqttUrl, pdecoded, sizeof(g_persistent.mqttUrl) - 1);
+        free(pdecoded);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "mqtt_url", g_persistent.mqttUrl);
         if (rv != ESP_OK) {
@@ -2288,8 +2295,15 @@ do_config_mqtt_get_handler(httpd_req_t *req)
 
       // Subscribe
       if (ESP_OK == (rv = httpd_query_key_value(buf, "sub", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found query parameter => sub=%s", param);
-        strncpy(g_persistent.mqttSub, param, sizeof(g_persistent.mqttSub) - 1);
+        char *pdecoded = urlDecode(param);
+        if (NULL == pdecoded) {
+          free(param);
+          free(buf);
+          return ESP_ERR_ESPNOW_NO_MEM;
+        }
+        ESP_LOGI(TAG, "Found query parameter => sub=%s", pdecoded);
+        strncpy(g_persistent.mqttSub, pdecoded, sizeof(g_persistent.mqttSub) - 1);
+        free(pdecoded);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "mqtt_sub", g_persistent.mqttSub);
         if (rv != ESP_OK) {
@@ -2302,8 +2316,15 @@ do_config_mqtt_get_handler(httpd_req_t *req)
 
       // Publish
       if (ESP_OK == (rv = httpd_query_key_value(buf, "pub", param, WEBPAGE_PARAM_SIZE))) {
-        ESP_LOGI(TAG, "Found query parameter => pub=%s", param);
-        strncpy(g_persistent.mqttPub, param, sizeof(g_persistent.mqttPub) - 1);
+        char *pdecoded = urlDecode(param);
+        if (NULL == pdecoded) {
+          free(param);
+          free(buf);
+          return ESP_ERR_ESPNOW_NO_MEM;
+        }
+        ESP_LOGI(TAG, "Found query parameter => pub=%s", pdecoded);
+        strncpy(g_persistent.mqttPub, pdecoded, sizeof(g_persistent.mqttPub) - 1);
+        free(pdecoded);
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "mqtt_pub", g_persistent.mqttPub);
         if (rv != ESP_OK) {
@@ -2579,7 +2600,7 @@ config_log_get_handler(httpd_req_t *req)
   sprintf(buf, "Port:<input type=\"text\" name=\"port\" value=\"%d\" >", g_persistent.logPort);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  sprintf(buf, "MQTT Topic:<input type=\"text\" name=\"topic\" value=\"%s\" >", g_persistent.logMqttTopic);
+  sprintf(buf, "MQTT log Topic:<input type=\"text\" name=\"topic\" value=\"%s\" >", g_persistent.logMqttTopic);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
   sprintf(buf, "<button class=\"bgrn bgrn:hover\">Save</button></fieldset></form></div>");
@@ -2711,7 +2732,7 @@ do_config_log_get_handler(httpd_req_t *req)
         ESP_LOGE(TAG, "Error getting log port => rv=%d", rv);
       }
 
-      // topic
+      // MQTT topic
       if (ESP_OK == (rv = httpd_query_key_value(buf, "topic", param, WEBPAGE_PARAM_SIZE))) {
         char *pdecoded = urlDecode(param);
         if (NULL == pdecoded) {

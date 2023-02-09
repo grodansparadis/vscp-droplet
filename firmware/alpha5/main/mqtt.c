@@ -27,28 +27,36 @@
   SOFTWARE.
 */
 
+#include "vscp-compiler.h"
+#include "vscp-projdefs.h"
+
 #include <stdio.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
-#include "esp_system.h"
-#include "esp_partition.h"
-#include "spi_flash_mmap.h"
-#include "nvs_flash.h"
-#include "esp_event.h"
-#include "esp_netif.h"
-#include "main.h"
 
-#include "esp_log.h"
-#include "mqtt_client.h"
-#include "esp_tls.h"
-#include "esp_ota_ops.h"
-#include "esp_mac.h" // esp_base_mac_addr_get
+#include <esp_system.h>
+#include <esp_partition.h>
+#include <spi_flash_mmap.h>
+#include <nvs_flash.h>
+#include <esp_event.h>
+#include <esp_netif.h>
+#include <esp_log.h>
+#include <mqtt_client.h>
+#include <esp_tls.h>
+#include <esp_ota_ops.h>
+#include <esp_mac.h> // esp_base_mac_addr_get
 #include <sys/param.h>
 
 #include <vscp.h>
+#include <vscp-firmware-helper.h>
 
+#include <main.h>
 #include "mqtt.h"
+
+// Global stuff
+extern node_persistent_config_t g_persistent;        // main
+extern transport_t g_tr_tcpsrv[MAX_TCP_CONNECTIONS]; // tcpsrv
 
 static const char *TAG = "MQTT";
 
@@ -83,15 +91,154 @@ extern const uint8_t mqtt_eclipse_io_pem_end[] asm("_binary_mqtt_eclipse_io_pem_
 //   ESP_LOGI(TAG, "binary sent with msg_id=%d", msg_id);
 // }
 
+//////////////////////////////////////////////////////////////////////////////
+// strsubst
+//
+// Substitute string occurrences in string
+//
+
+static char *
+strsubst(char *pNewStr, size_t len, const char *pStr, const char *pTarget, const char *pReplace)
+{
+  char *p = pStr;
+  char *pLast = pStr;
+
+  // Check pointers
+  if ((NULL == pNewStr) || (NULL == pStr) || (NULL == pTarget) || (NULL == pReplace)) {
+    return NULL;
+  }
+
+  memset(pNewStr, 0, len);
+  while (*p && (NULL != (p = strstr(p, pTarget)))) {
+    
+    // Copy first part to string
+    strncat(pNewStr, pLast, p-pLast);
+    
+    // Point beyond taget
+    p += strlen(pTarget);
+
+    // Target has to fit
+    if (strlen(pNewStr) + strlen(pTarget) > (len - 1)) {
+      return NULL;
+    }
+    // Copy in target
+    strcat(pNewStr, pReplace);
+
+    // Save last p
+    pLast = p;
+  }
+
+  if (*pLast && (strlen(pLast) <= (len - 1))) {
+    strcat(pNewStr, pLast);
+  }
+
+  return pNewStr;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // mqtt_send_vscp_event
 //
 
-void
-mqtt_send_vscp_event(const char *topic, vscpEventEx *pex)
+int
+mqtt_send_vscp_event(const char *topic, const vscpEvent *pev)
 {
-  int msg_id      = esp_mqtt_client_publish(g_mqtt_client, "/topic/binary", "hello", 5, 0, 0);
-  ESP_LOGI(TAG, "binary sent with msg_id=%d", msg_id);
+  int rv;
+  const char *pTopic = topic;
+
+  // Check event pointer
+  if (NULL == pev) {
+    return VSCP_ERROR_INVALID_POINTER;
+  }
+
+  // If no topic set. Use configured topic
+  if (NULL == topic) {
+    pTopic = g_persistent.mqttPub;
+  }
+
+  // We publish VSCP event on JSON form
+  char *pbuf = VSCP_MALLOC(2048);
+  if (NULL == pbuf) {
+    ESP_LOGE(TAG, "Unable to allocate JSON buffer for conversion");
+    return VSCP_ERROR_MEMORY;
+  }
+
+  if (VSCP_ERROR_SUCCESS != (rv = /*vscp_fwhlp_create_json*/ droplet_create_vscp_json(pbuf, 2048, pev))) {
+    VSCP_FREE(pbuf);
+    ESP_LOGE(TAG, "Failed to convert event to JSON rv = %d", rv);
+    return rv;
+  }
+
+  ESP_LOGI(TAG, "converted");
+
+  /*
+    {{node}}        - Node name
+    {{guid}}        - Node GUID
+    {{evguid}}      - Event GUID
+    {{class}}       - Event class
+    {{type}}        - Event type
+    {{nickname}}    - Node nickname (16-bit)
+    {{sindex}}      - Sensor index (if any)
+
+    Typical topic
+    vscp/FF:FF:FF:FF:FF:FF:FF:F5:01:00:00:00:00:00:00:02/20/9/2
+    vscp/{{guid}}/{{class}}/{{type}}/{{index}}
+  */
+
+  char newTopic[128],saveTopic[128], workbuf[48];
+
+  // Node name
+  strsubst(newTopic, sizeof(newTopic), pTopic, "{{node}}", g_persistent.nodeName);
+  strcpy(saveTopic, newTopic);
+  ESP_LOGI(TAG, "New topic %s", newTopic);
+
+  // GUID
+  vscp_fwhlp_writeGuidToString(workbuf, g_persistent.nodeGuid);
+  strsubst(newTopic, sizeof(newTopic), saveTopic, "{{guid}}", workbuf);
+  strcpy(saveTopic, newTopic);
+  ESP_LOGI(TAG, "New topic %s", newTopic);
+
+  // GUID
+  vscp_fwhlp_writeGuidToString(workbuf, pev->GUID);
+  strsubst(newTopic, sizeof(newTopic), saveTopic, "{{evguid}}", workbuf);
+  strcpy(saveTopic, newTopic);
+  ESP_LOGI(TAG, "New topic %s", newTopic);
+
+  // Class
+  sprintf(workbuf, "%d", pev->vscp_class);
+  strsubst(newTopic, sizeof(newTopic), saveTopic, "{{class}}", workbuf);
+  strcpy(saveTopic, newTopic);
+  ESP_LOGI(TAG, "New topic %s", newTopic);
+
+  // Type
+  sprintf(workbuf, "%d", pev->vscp_type);
+  strsubst(newTopic, sizeof(newTopic), saveTopic, "{{type}}", workbuf);
+  strcpy(saveTopic, newTopic);
+  ESP_LOGI(TAG, "New topic %s", newTopic);
+
+  // nickname
+  sprintf(workbuf, "%d", ((pev->GUID[14] << 8) + (pev->GUID[15])));
+  strsubst(newTopic, sizeof(newTopic), saveTopic, "{{nickname}}", workbuf);
+  strcpy(saveTopic, newTopic);
+  ESP_LOGI(TAG, "New topic %s", newTopic);
+
+  // sensor index
+  if (VSCP_ERROR_SUCCESS == vscp_fwhlp_isMeasurement(pev)) {
+    sprintf(workbuf, "%d", vscp_fwhlp_getMeasurementSensorIndex(pev));
+  }
+  else {
+    memset(workbuf, 0, sizeof(workbuf));
+  }
+  strsubst(newTopic, sizeof(newTopic), saveTopic, "{{sindex}}", workbuf);
+  strcpy(saveTopic, newTopic);
+  ESP_LOGI(TAG, "New topic %s", newTopic);
+
+  int msg_id =
+    esp_mqtt_client_publish(g_mqtt_client, pTopic, pbuf, strlen(pbuf), g_persistent.mqttQos, g_persistent.mqttRetain);
+  ESP_LOGI(TAG, "Published VSCP event to MQTT broker with msg_id=%d topic=%s", msg_id, pTopic);
+
+  VSCP_FREE(pbuf);
+
+  return VSCP_ERROR_SUCCESS;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -123,11 +270,11 @@ mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, 
                                   0);
       ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
 
-      msg_id = esp_mqtt_client_subscribe(client, "/topic/qos1", 1);
-      ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
+      // msg_id = esp_mqtt_client_subscribe(client, "/topic/qos1", 1);
+      // ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
 
-      msg_id = esp_mqtt_client_unsubscribe(client, "/topic/qos1");
-      ESP_LOGI(TAG, "sent unsubscribe successful, msg_id=%d", msg_id);
+      // msg_id = esp_mqtt_client_unsubscribe(client, "/topic/qos1");
+      // ESP_LOGI(TAG, "sent unsubscribe successful, msg_id=%d", msg_id);
       break;
 
     case MQTT_EVENT_DISCONNECTED:
@@ -154,7 +301,7 @@ mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, 
       printf("DATA=%.*s\r\n", event->data_len, event->data);
       if (strncmp(event->data, "send binary please", event->data_len) == 0) {
         ESP_LOGI(TAG, "Sending the binary");
-        //send_binary(client);
+        // send_binary(client);
       }
       break;
 
@@ -190,12 +337,11 @@ void
 mqtt_start(void)
 {
   // Set client id from mac
-	uint8_t mac[8];
-	ESP_ERROR_CHECK(esp_base_mac_addr_get(mac));
-	char client_id[64];
-	sprintf(client_id, "pub-%02x%02x%02x%02x%02x%02x", mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
-	//printf("client_id=[%s]\n", client_id);
-
+  uint8_t mac[8];
+  ESP_ERROR_CHECK(esp_base_mac_addr_get(mac));
+  char client_id[64];
+  sprintf(client_id, "alpha-%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  // printf("client_id=[%s]\n", client_id);
 
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
   const esp_mqtt_client_config_t mqtt_cfg = {
@@ -205,12 +351,12 @@ mqtt_start(void)
     .credentials.client_id               = client_id,
     .credentials.authentication.password = "secret",
   };
-  #else
-    esp_mqtt_client_config_t mqtt_cfg = {
-		.uri = "mqtt://192.168.1.7:1883",
-		.event_handle = mqtt_event_handler,
-		.client_id = client_id
-  #endif
+#else
+  esp_mqtt_client_config_t mqtt_cfg = {
+    .uri          = "mqtt://192.168.1.7:1883",
+    .event_handle = mqtt_event_handler,
+    .client_id    = client_id
+#endif
 
   ESP_LOGI(TAG, "[APP] Free memory: %lu bytes", esp_get_free_heap_size());
   g_mqtt_client = esp_mqtt_client_init(&mqtt_cfg);

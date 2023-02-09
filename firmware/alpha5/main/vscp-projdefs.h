@@ -9,6 +9,15 @@
 #ifndef _VSCP_PROJDEFS_H_
 #define _VSCP_PROJDEFS_H_
 
+// ----------------------------------------------------------------------------
+//                        VSCP helper lib defines
+// ----------------------------------------------------------------------------
+
+#define VSCP_FWHLP_CRYPTO_SUPPORT   // AES crypto support
+//#define VSCP_FWHLP_JSON_SUPPORT     // Enable JSON support (Need cJSON lib)
+
+// ----------------------------------------------------------------------------
+
 // 16-bit nickname for node
 #define PROJDEF_NODE_NICKNAME   0
 

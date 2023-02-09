@@ -96,7 +96,7 @@ typedef struct {
 #define DEFAULT_TCPIP_PASSWORD "secret"
 #define DEFAULT_TCPIP_VER      4 // Ipv6 = 6 or Ipv4 = 4
 #define TCPSRV_WELCOME_MSG                                                                                             \
-  "Welcome to the Droplet Alpha node\r\n"                                                                              \
+  "Welcome to the %s node\r\n"                                                                                         \
   "Copyright (C) 2000-2023 Åke Hedman, Grodans Paradis AB\r\n"                                                        \
   "https://www.grodansparadis.com\r\n"                                                                                 \
   "+OK\r\n"
@@ -149,6 +149,7 @@ typedef struct {
   char logMqttTopic[64];   //  MQTT topic
 
   // VSCP Link
+  bool vscplinkEnable;
   char vscplinkUrl[32];      // URL VSCP tcp/ip Link host (set to blank yto disable)
   uint16_t vscplinkPort;     // Port on VSCP tcp/ip Link host
   char vscplinkUsername[32]; // Username for VSCP tcp/ip Link host
@@ -156,8 +157,9 @@ typedef struct {
   uint8_t vscpLinkKey[32];   // Security key (16 (EAS128)/24(AES192)/32(AES256))
 
   // Droplet
+  bool dropletEnable;
   bool dropletLongRange;             // Enable long range mode
-  uint8_t dropletSizeQueue;         // Input queue size
+  uint8_t dropletSizeQueue;          // Input queue size
   uint8_t droppletChannel;           // Channel to use (zero is current)
   uint8_t dropletTtl;                // Default ttl
   bool dropletForwardEnable;         // Forward when packets are received
@@ -167,18 +169,22 @@ typedef struct {
   int8_t dropletFilterWeakSignal;    // Filter on RSSI (zero is no rssi filtering)
 
   // Web server
+  bool webEnable;
   uint16_t webPort;     // Port web server listens on
   char webUsername[32]; // Basic Auth username
   char webPassword[32]; // Basic Auth password
 
   // MQTT  (mqtt[s]://[username][:password]@host.domain[:port])
+  bool mqttEnable;
   char mqttUrl[32];
   uint16_t mqttPort;
   char mqttClientid[32];
   char mqttUsername[32];
   char mqttPassword[32];
-  char mqttSub[64];
-  char mqttPub[64];
+  int mqttQos;
+  int mqttRetain;
+  char mqttSub[128];
+  char mqttPub[128];
 
 } node_persistent_config_t;
 
@@ -253,6 +259,15 @@ typedef enum {
 } alpha_cb_event_t;
 
 // ----------------------------------------------------------------------------
+
+/**
+ * @brief droplet receive callback
+ *
+ * @param pev Pointer to received event.
+ * @param userdata Pointer to user data.
+ */
+void
+droplet_receive_cb(const vscpEvent *pev, void *userdata);
 
 /**
  * @brief Read processor on chip temperature

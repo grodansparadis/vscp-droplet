@@ -63,6 +63,8 @@
 
 #include <esp_crt_bundle.h>
 
+#include <cJSON.h>
+
 #include "websrv.h"
 #include "mqtt.h"
 
@@ -214,11 +216,13 @@ node_persistent_config_t g_persistent = {
   .logMqttTopic    = "%guid/log",
 
   // Web server
+  .webEnable = true,
   .webPort     = 80,
   .webUsername = "vscp",
   .webPassword = "secret",
 
   // VSCP tcp/ip Link
+  .vscplinkEnable = true,
   .vscplinkUrl      = { 0 },
   .vscplinkPort     = VSCP_DEFAULT_TCP_PORT,
   .vscplinkUsername = "vscp",
@@ -226,15 +230,19 @@ node_persistent_config_t g_persistent = {
   .vscpLinkKey      = { 0 }, // VSCP_DEFAULT_KEY32,
 
   // MQTT
+  .mqttEnable = true,
   .mqttUrl      = { 0 },
   .mqttPort     = 1883,
   .mqttClientid = "123",
   .mqttUsername = "vscp",
   .mqttPassword = "secret",
-  .mqttSub      = "vscp/%guid/sub/#",
-  .mqttPub      = "vscp/%guid/",
+  .mqttQos          = 0,
+  .mqttRetain       = 0,
+  .mqttSub      = "vscp/{{guid}}/pub/#",
+  .mqttPub      = "vscp/{{guid}}/{{class}}/{{type}}/{{index}}",
 
   // Droplet
+  .dropletEnable = true,
   .dropletLongRange             = false,
   .droppletChannel              = 0, // Use wifi channel
   .dropletTtl                   = 32,
@@ -243,7 +251,7 @@ node_persistent_config_t g_persistent = {
   .dropletEncryption            = VSCP_ENCRYPTION_AES128, // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256
   .dropletFilterAdjacentChannel = true,                   // Don't receive if from other channel
   .dropletForwardSwitchChannel  = false,                  // Allow switchin gchannel on forward
-  .dropletFilterWeakSignal      = -67,                    // Filter onm RSSI (zero is no rssi filtering)
+  .dropletFilterWeakSignal      = -100,                   // Filter onm RSSI (zero is no rssi filtering)
 };
 
 //----------------------------------------------------------
@@ -280,6 +288,46 @@ static EventGroupHandle_t g_wifi_event_group;
 
 #define SEND_CB_OK   BIT0
 #define SEND_CB_FAIL BIT1
+
+///////////////////////////////////////////////////////////////////////////////
+// droplet_receive_cb
+//
+
+void
+droplet_receive_cb(const vscpEvent *pev, void *userdata)
+{
+  int rv;
+
+  if (NULL == pev) {
+    ESP_LOGE(TAG, "Invalid pointer for droplet rx cb");
+    return;
+  }
+
+  ESP_LOGI(TAG, "-------------> Sent event %d", strlen(g_persistent.mqttUrl));
+
+  // Disable if no broker URL defined
+  if (g_persistent.mqttEnable && (g_persistent.mqttUrl)) {
+    // Send event to MQTT broker
+    if (VSCP_ERROR_SUCCESS != (rv = mqtt_send_vscp_event(NULL, pev))) {
+      ESP_LOGE(TAG, "Failed to send event to MQTT broker rv=%d", rv);
+    }
+  }
+
+  // If VSCP Link protocol is enabled and a client is connected send event
+  // to client
+  if (g_persistent.vscplinkEnable && strlen(g_persistent.vscplinkUrl)) {
+    // Send event to active VSCP link clients
+    printf("Sending event to VSCP Link client\n");
+    if (VSCP_ERROR_SUCCESS != (rv = tcpsrv_sendEventExToAllClients(pev))) {
+      if (VSCP_ERROR_TRM_FULL == rv) {
+        ESP_LOGI(TAG, "Failed to send event to tcpipsrv (queue is full for client)");
+      }
+      else {
+        ESP_LOGE(TAG, "Failed to send event to tcpipsrv rv=%d", rv);
+      }
+    }
+  }
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // readPersistentConfigs
@@ -1567,6 +1615,8 @@ app_main(void)
   uint8_t buf[DROPLET_MIN_FRAME + 3]; // Three byte data
   size_t size = sizeof(buf);
 
+  cJSON *root = cJSON_CreateObject();
+
   // Initialize NVS partition
   esp_err_t rv = nvs_flash_init();
   if (rv == ESP_ERR_NVS_NO_FREE_PAGES || rv == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -1861,6 +1911,9 @@ app_main(void)
 
   // Set primary key
   memcpy(droplet_config.pmk, g_persistent.pmk, 32);
+
+  // Set callback for droplet receive events
+  droplet_set_vscp_user_handler_cb(droplet_receive_cb);
 
   if (ESP_OK != droplet_init(&droplet_config)) {
     ESP_LOGE(TAG, "Failed to initialize espnow");

@@ -40,12 +40,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <esp_timer.h>
-
 #include <lwip/err.h>
 #include <lwip/netdb.h>
 #include <lwip/sockets.h>
 #include <lwip/sys.h>
+
+#include <esp_timer.h>
 
 #include "vscp-compiler.h"
 #include "vscp-projdefs.h"
@@ -57,9 +57,9 @@
 #define TAG "linkcb"
 
 extern node_persistent_config_t g_persistent;
-extern QueueHandle_t g_queueDroplet;          // Received events from VSCP link clients
-//extern SemaphoreHandle_t g_droplet_send_lock; // From droplet
-// extern vscpctx_t g_ctx[MAX_TCP_CONNECTIONS];
+extern QueueHandle_t g_queueDroplet; // Received events from VSCP link clients
+// extern SemaphoreHandle_t g_droplet_send_lock; // From droplet
+//  extern vscpctx_t g_ctx[MAX_TCP_CONNECTIONS];
 
 // ****************************************************************************
 //                       VSCP Link protocol callbacks
@@ -72,13 +72,21 @@ extern QueueHandle_t g_queueDroplet;          // Received events from VSCP link 
 int
 vscp_link_callback_welcome(const void *pdata)
 {
+  char *pbuf = VSCP_MALLOC(strlen(TCPSRV_WELCOME_MSG) + strlen(g_persistent.nodeName) + 1);
+  if (NULL == pbuf) {
+    return VSCP_ERROR_INVALID_POINTER;
+  }
+
   if (NULL == pdata) {
     return VSCP_ERROR_INVALID_POINTER;
   }
 
   vscpctx_t *pctx = (vscpctx_t *) pdata;
 
-  send(pctx->sock, TCPSRV_WELCOME_MSG, strlen(TCPSRV_WELCOME_MSG), 0);
+  sprintf(pbuf, TCPSRV_WELCOME_MSG, g_persistent.nodeName);
+  send(pctx->sock, pbuf, strlen(pbuf), 0);
+
+  VSCP_FREE(pbuf);
   return VSCP_ERROR_SUCCESS;
 }
 
@@ -119,7 +127,7 @@ vscp_link_callback_quit(const void *pdata)
   close(pctx->sock);
 
   // Set context defaults (and socket to zero to terminate working thread)
-  setContextDefaults(pctx);
+  tcpsrv_setContextDefaults(pctx);
 
   return VSCP_ERROR_SUCCESS;
 }
@@ -354,51 +362,48 @@ vscp_link_callback_send(const void *pdata, vscpEvent *pev)
 {
   esp_err_t ret;
 
-  printf("Callback send 1\n");
-
   if ((NULL == pdata) && (NULL == pev)) {
     return VSCP_ERROR_INVALID_POINTER;
   }
-printf("Callback send 2\n");
+
   vscpctx_t *pctx = (vscpctx_t *) pdata;
 
   // Filter
   if (!vscp_fwhlp_doLevel2Filter(pev, &pctx->filter)) {
-    printf("Filtered out\n");
     return VSCP_ERROR_SUCCESS; // Filter out == OK
   }
-printf("Callback send 3\n");
+
   // Update send statistics
   pctx->statistics.cntTransmitFrames++;
   pctx->statistics.cntTransmitData += pev->sizeData;
 
-  // if (pdTRUE == xSemaphoreTake(g_queueDroplet, (TickType_t) 10)) {
-  //   if (pdTRUE != xQueueSend(g_queueDroplet, &pev, 0)) {
-  //     pctx->statistics.cntOverruns++;
-  //     xSemaphoreGive(g_queueDroplet);
-  //     return VSCP_ERROR_TRM_FULL;
-  //   }
-  //   xSemaphoreGive(g_queueDroplet);
-  // }
-  // else {
-  //   ESP_LOGW(TAG, "Unable to get mutex for droplet queue");
-  // }
+  // if obid is not set set to channel id
+  if (!pev->obid) {
+    pev->obid = pctx->id;
+  }
 
-  if ( ESP_OK != (ret = droplet_sendEvent( pev, 100))) {
+  if (ESP_OK != (ret = droplet_sendEvent(pev, 100))) {
     ESP_LOGE(TAG, "Failed to send event. rv = %d", ret);
     return VSCP_ERROR_ERROR;
   }
 
-  printf("sent 4\n");
+  return VSCP_ERROR_SUCCESS;
+}
 
-  // if (pdTRUE == xSemaphoreTake(g_droplet_send_lock, pdMS_TO_TICKS(10))) {
-    
-  //   xSemaphoreGive(g_droplet_send_lock);
-  // }
+///////////////////////////////////////////////////////////////////////////////
+// vscp_link_callback_chkData
+//
 
-  // We own the event from now on and must
-  // delete it and it's data when we are done
-  // with it
+int
+vscp_link_callback_chkData(const void *pdata, uint16_t *pcount)
+{
+  // Check pointer
+  if (NULL == pdata) {
+    return VSCP_ERROR_INVALID_POINTER;
+  }
+
+  vscpctx_t *pctx = (vscpctx_t *) pdata;
+  *pcount = uxQueueMessagesWaiting(pctx->queueClient);
 
   return VSCP_ERROR_SUCCESS;
 }
@@ -408,7 +413,7 @@ printf("Callback send 3\n");
 //
 
 int
-vscp_link_callback_retr(const void *pdata, vscpEvent *pev)
+vscp_link_callback_retr(const void *pdata, vscpEvent **pev)
 {
   if ((NULL == pdata) && (NULL == pev)) {
     return VSCP_ERROR_INVALID_POINTER;
@@ -416,13 +421,17 @@ vscp_link_callback_retr(const void *pdata, vscpEvent *pev)
 
   vscpctx_t *pctx = (vscpctx_t *) pdata;
 
-  if (pdTRUE != xQueueReceive(pctx->queueClient, &(pev), 0)) {
-    return VSCP_ERROR_RCV_EMPTY;
+  if (pdTRUE == xSemaphoreTake(pctx->mutexQueue, 0)) {
+    if (pdTRUE != xQueueReceive(pctx->queueClient, pev, 0)) {
+      xSemaphoreGive(pctx->mutexQueue);
+      return VSCP_ERROR_RCV_EMPTY; // Yes receive
+    }
+    xSemaphoreGive(pctx->mutexQueue);
   }
 
   // Update receive statistics
   pctx->statistics.cntReceiveFrames++;
-  pctx->statistics.cntReceiveData += pev->sizeData;
+  pctx->statistics.cntReceiveData += (*pev)->sizeData;
 
   return VSCP_ERROR_SUCCESS;
 }
@@ -466,24 +475,6 @@ vscp_link_callback_get_rcvloop_status(const void *pdata, int *pRcvLoop)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// vscp_link_callback_chkData
-//
-
-int
-vscp_link_callback_chkData(const void *pdata, uint16_t *pcount)
-{
-  // Check pointer
-  if (NULL == pdata) {
-    return VSCP_ERROR_INVALID_POINTER;
-  }
-
-  vscpctx_t *pctx = (vscpctx_t *) pdata;
-  *pcount         = uxQueueMessagesWaiting(pctx->queueClient);
-
-  return VSCP_ERROR_SUCCESS;
-}
-
-///////////////////////////////////////////////////////////////////////////////
 // vscp_link_callback_clrAll
 //
 
@@ -496,10 +487,17 @@ vscp_link_callback_clrAll(const void *pdata)
   }
 
   vscpctx_t *pctx = (vscpctx_t *) pdata;
-  // vscp_fifo_clear(&pctx->fifoEventsOut);
+
   vscpEvent *pev;
-  while (pdTRUE == xQueueReceive(pctx->queueClient, &(pev), 0)) {
-    vscp_fwhlp_deleteEvent(&pev);
+  if (pdTRUE == xSemaphoreTake(pctx->mutexQueue, 0)) {
+
+    while (pdTRUE == xQueueReceive(pctx->queueClient, &(pev), 0)) {
+      vscp_fwhlp_deleteEvent(&pev);
+    }
+    xSemaphoreGive(pctx->mutexQueue);
+  }
+  else {
+    return VSCP_ERROR_ERROR;
   }
 
   return VSCP_ERROR_SUCCESS;
@@ -658,7 +656,7 @@ vscp_link_callback_info(const void *pdata, VSCPStatus *pstatus)
 //
 
 int
-vscp_link_callback_rcvloop(const void *pdata, vscpEvent *pev)
+vscp_link_callback_rcvloop(const void *pdata, vscpEvent **pev)
 {
   // Check pointer
   if (NULL == pdata) {
@@ -673,13 +671,22 @@ vscp_link_callback_rcvloop(const void *pdata, vscpEvent *pev)
     return VSCP_ERROR_TIMEOUT;
   }
 
-  if (pdTRUE != xQueueReceive(pctx->queueClient, &(pev), 0)) {
-    return VSCP_ERROR_RCV_EMPTY;
+  if (pdTRUE == xSemaphoreTake(pctx->mutexQueue, 0)) {
+    if (pdTRUE != xQueueReceive(pctx->queueClient, pev, 0)) {
+      xSemaphoreGive(pctx->mutexQueue);
+      return VSCP_ERROR_RCV_EMPTY;
+    }
+    xSemaphoreGive(pctx->mutexQueue);
   }
+  else {
+    return VSCP_ERROR_TIMEOUT;
+  }
+
+  xSemaphoreGive(pctx->mutexQueue);
 
   // Update receive statistics
   pctx->statistics.cntReceiveFrames++;
-  pctx->statistics.cntReceiveData += pev->sizeData;
+  pctx->statistics.cntReceiveData += (*pev)->sizeData;
 
   return VSCP_ERROR_SUCCESS;
 }

@@ -35,7 +35,6 @@
 #include "freertos/semphr.h"
 
 #include <vscp.h>
-#include <vscp-fifo.h>
 #include <vscp-firmware-helper.h>
 #include <vscp-link-protocol.h>
 #include <vscp-firmware-level2.h>
@@ -91,15 +90,16 @@ typedef struct _vscpctx {
  * @param pctx Pointer to context
  */
 void
-setContextDefaults(vscpctx_t *pctx);
+tcpsrv_setContextDefaults(vscpctx_t *pctx);
 
 /**
+ * @fn tcpsrv_sendEventExToAllClients
  * @brief Send event ex to all active clients
- * @param pex Pointer to EventEx to send
+ * @param pev Pointer to event to send
  * @return VSCP_EVENT_SUCCESS if all web OK. Error code otherwise.
  */
 int
-sendEventExToAll(vscpEvent *pev);
+tcpsrv_sendEventExToAllClients(const vscpEvent *pev);
 
 /*!
   VSCP tcp/ip link protocol task

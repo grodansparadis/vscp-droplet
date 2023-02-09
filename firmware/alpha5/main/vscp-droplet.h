@@ -11,8 +11,7 @@
  *
  * The MIT License (MIT)
  *
- * Copyright (C) 2000-2022 Ake Hedman,
- * The VSCP Project <info@grodansparadis.com>
+ * Copyright © 2000-2023 Ake Hedman, the VSCP project <info@vscp.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -141,14 +140,16 @@ typedef enum {
 #define DROPLET_ADDR_IS_EQUAL(addr1, addr2) !memcmp(addr1, addr2, 6)
 
 // Callback functions
-typedef void (*vscp_event_handler_cb_t)(const vscpEventEx *pex, void *userdata);
+
+// Callback for droplet received events
+typedef void (*vscp_event_handler_cb_t)(const vscpEvent *pev, void *userdata);
 
 // ----------------------------------------------------------------------------
 
 /**
  * @brief Set droplet configuration
  *
- * @param config Pointer to droplet configurationb
+ * @param config Pointer to droplet configuration
  * @return esp_err_t
  */
 esp_err_t
@@ -318,36 +319,45 @@ int
 droplet_frameToEx(vscpEventEx *pex, const uint8_t *buf, uint8_t len, uint32_t timestamp);             
 
 /**
- * @brief Set VSCP handler event callback
+ * @brief Set the VSCP event receive handler callback
  *
  * @param cb Callback
  *
- * Calls a VSCP event callback for further handling when a valid event
- * is received,
+ * Set the VSCP event receive handler callback
  *
  */
 void
-droplet_set_vscp_handler_cb(vscp_event_handler_cb_t *cb);
+droplet_set_vscp_user_handler_cb(vscp_event_handler_cb_t *cb);
 
 /**
- * @brief
+ * @brief Clear VSCP handler event recive handler callback
  *
- * @param jsonVscpEventObj
- * @param pex
+ */
+void
+droplet_clear_vscp_handler_cb(void);
+
+/**
+ * @fn droplet_parse_vscp_json
+ * @brief Convert JSON string to VSCP event
+ *
+ * @param jsonVscpEventObj1
+ * @param pev
  * @return int
  */
 int
-droplet_parse_vscp_json(const char *jsonVscpEventObj, vscpEventEx *pex);
+droplet_parse_vscp_json(vscpEvent *pev, const char *jsonVscpEventObj);
 
 /**
- * @brief
+ * @fn droplet_create_vscp_json
+ * @brief Convert pointer to VSCP event to VSCP JSON string
  *
- * @param strObj
- * @param pex
- * @return int
+ * @param strObj String buffer that will get result
+ * @param len Size of string buffer
+ * @param pev Pointer to event
+ * @return int Returns VSCP_ERROR_SUCCESS on OK, error code else.
  */
 int
-droplet_create_vscp_json(char *strObj, vscpEventEx *pex);
+droplet_create_vscp_json(char *strObj, size_t len, vscpEvent *pev);
 
 // ----------------------------------------------------------------------------
 

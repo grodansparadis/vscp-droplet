@@ -52,7 +52,7 @@
 // Defines from demo.c
 
 extern node_persistent_config_t g_persistent;
-extern QueueHandle_t g_queueDroplet; // Received events
+//extern QueueHandle_t g_queueDroplet; // Received events
 extern vscpctx_t g_ctx[MAX_TCP_CONNECTIONS];
 
 // ****************************************************************************
@@ -394,11 +394,11 @@ vscp2_protocol_callback_send_event(const void *pdata, vscpEvent *pev)
 
   // Only if user is validated
   if (pctx->bValidated) {
-    pev->obid = pctx->sock;
-    if (pdTRUE != xQueueSend(g_queueDroplet, (void *) &pev, 0)) {
-      vscp_fwhlp_deleteEvent(&pev);
-      pctx->statistics.cntOverruns++;
-    }
+    // pev->obid = pctx->sock;
+    // if (pdTRUE != xQueueSend(g_queueDroplet, (void *) &pev, 0)) {
+    //   vscp_fwhlp_deleteEvent(&pev);
+    //   pctx->statistics.cntOverruns++;
+    // }
   }
 
   return VSCP_ERROR_SUCCESS;
