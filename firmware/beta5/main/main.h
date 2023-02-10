@@ -1,5 +1,5 @@
 /*
-  VSCP Wireless CAN4VSCP Gateway (VSCP-WCANG)
+  VSCP Beta node
 
   This file is part of the VSCP (https://www.vscp.org)
 
@@ -25,8 +25,8 @@
   SOFTWARE.
 */
 
-#ifndef __VSCP_ESP_NOW_ALPHA_H__
-#define __VSCP_ESP_NOW_ALPHA_H__
+#ifndef __VSCP_ESP_NOW_BETA_H__
+#define __VSCP_ESP_NOW_BETA_H__
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -82,41 +82,6 @@ typedef struct {
 #define DEFAULT_BLE_ENABLE       true
 #define DEFAULT_ADVERTISE_ENABLE true
 
-// Web server
-#define DEFAULT_WEB_ENABLE true
-#define DEFAULT_WEB_PORT   80
-
-// MQTT
-#define DEAFULT_MQTT_ENABLE true // Enabled
-
-// tcp/ip interface
-#define DEFAULT_TCPIP_ENABLE   true // Enabled
-#define DEFAULT_TCPIPPORT      9598
-#define DEFAULT_TCPIP_USER     "vscp"
-#define DEFAULT_TCPIP_PASSWORD "secret"
-#define DEFAULT_TCPIP_VER      4 // Ipv6 = 6 or Ipv4 = 4
-#define TCPSRV_WELCOME_MSG                                                                                             \
-  "Welcome to the %s node\r\n"                                                                                         \
-  "Copyright (C) 2000-2023 Åke Hedman, Grodans Paradis AB\r\n"                                                        \
-  "https://www.grodansparadis.com\r\n"                                                                                 \
-  "+OK\r\n"
-
-// UDP interface
-#define DEFAULT_UDP_ENABLE    true // Enabled
-#define DEFAULT_UDP_RX_ENABLE true // Enable UDP server
-#define DEFAULT_UDP_TX_ENABLE true // Enable UDP client
-
-// Multicast
-#define DEFAULT_MULTICAST_ENABLE false // Disable
-
-// MQTT broker
-#define DEFAULT_MQTT_ENABLE     true
-#define DEFAULT_MQTT_ADDRESS    "192.168.1.7"
-#define DEFAULT_MQTT_PORT       1883
-#define DEFAULT_MQTT_USER       "vscp"
-#define DEFAULT_MQTT_PASSWORD   "secret"
-#define DEFAULT_TOPIC_SUBSCRIBE "VSCP"
-#define DEFAULT_TOPIC_PUBLISH   "VSCP/PUB"
 
 // ----------------------------------------------------------------------------
 
@@ -139,25 +104,8 @@ typedef struct {
   uint8_t startDelay;   // Delay before wifi is enabled (to charge cap)
   uint32_t bootCnt;     // Number of restarts (not editable)
 
-  // Logging
-  uint8_t logwrite2Stdout; // Enable write Logging to STDOUT
-  uint8_t logLevel;        // 'ERROR' is default
-  uint8_t logType;         // STDOUT / UDP / TCP / HTTP / MQTT /VSCP
-  uint8_t logRetries;      // Number of log log retries
-  char logUrl[32];         // For UDP/TCP/HTML
-  uint16_t logPort;        // Port for UDP
-  char logMqttTopic[64];   //  MQTT topic
-
-  // VSCP Link
-  bool vscplinkEnable;
-  char vscplinkUrl[32];      // URL VSCP tcp/ip Link host (set to blank yto disable)
-  uint16_t vscplinkPort;     // Port on VSCP tcp/ip Link host
-  char vscplinkUsername[32]; // Username for VSCP tcp/ip Link host
-  char vscplinkPassword[32]; // Password for VSCP tcp/ip Link host
-  uint8_t vscpLinkKey[32];   // Security key (16 (EAS128)/24(AES192)/32(AES256))
 
   // Droplet
-  bool dropletEnable;
   bool dropletLongRange;             // Enable long range mode
   uint8_t dropletSizeQueue;          // Input queue size
   uint8_t droppletChannel;           // Channel to use (zero is current)
@@ -167,29 +115,6 @@ typedef struct {
   bool dropletFilterAdjacentChannel; // Don't receive if from other channel
   bool dropletForwardSwitchChannel;  // Allow switching channel on forward
   int8_t dropletFilterWeakSignal;    // Filter on RSSI (zero is no rssi filtering)
-
-  // Web server
-  bool webEnable;
-  uint16_t webPort;     // Port web server listens on
-  char webUsername[32]; // Basic Auth username
-  char webPassword[32]; // Basic Auth password
-
-  // MQTT  (mqtt[s]://[username][:password]@host.domain[:port])
-  bool mqttEnable;
-  char mqttUrl[32];
-  uint16_t mqttPort;
-  char mqttClientid[64];
-  char mqttUsername[32];
-  char mqttPassword[32];
-  int mqttQos;
-  int mqttRetain;
-  char mqttSub[128];
-  char mqttPub[128];
-  char mqttVerification[32*1024];   // For server certificate
-  char mqttLwTopic[128];
-  char mqttLwMessage[128];
-  uint8_t mqttLwQos;
-  bool mqttLwRetain;
 } node_persistent_config_t;
 
 // ----------------------------------------------------------------------------
@@ -215,52 +140,52 @@ typedef struct {
 
 #define IS_BROADCAST_ADDR(addr) (memcmp(addr, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN) == 0)
 
-// Alpha node states
+// Beta node states
 typedef enum {
   MAIN_STATE_WORK, // Standard working state
   MAIN_STATE_INIT, // Active state during init until wifi is connected
   MAIN_STATE_PROV, // Active state during provisioning
   MAIN_STATE_SET_DEFAULTS
-} alpha_node_states_t;
+} beta_node_states_t;
 
 ESP_EVENT_DECLARE_BASE(ALPHA_EVENT); // declaration of the alpha events family
 
 /*!
-  Alpha events
+  Beta events
 */
 typedef enum {
   /**
    * Start client provisioning and security transfer.
    * This state is active for 30 seconds.
    */
-  ALPHA_START_CLIENT_PROVISIONING,
+  BETA_START_CLIENT_PROVISIONING,
 
   /**
    * Stop client provisioning and security transfer.
    * This event happens 30 seconds after start
    */
-  ALPHA_STOP_CLIENT_PROVISIONING,
+  BETA_STOP_CLIENT_PROVISIONING,
 
   /**
    * Restart system
    */
-  ALPHA_RESTART,
+  BETA_RESTART,
 
   /**
    * Restore factory default and erase wifi credentials
    */
-  ALPHA_RESTORE_FACTORY_DEFAULTS,
+  BETA_RESTORE_FACTORY_DEFAULTS,
 
   /**
    * Node is waiting to get IP address
    */
-  ALPHA_GET_IP_ADDRESS_START,
+  BETA_GET_IP_ADDRESS_START,
 
   /**
    * Node have received IP address
    */
-  ALPHA_GET_IP_ADDRESS_STOP,
-} alpha_cb_event_t;
+  BETA_GET_IP_ADDRESS_STOP,
+} beta_cb_event_t;
 
 // ----------------------------------------------------------------------------
 
@@ -288,62 +213,5 @@ read_onboard_temperature(void);
  */
 uint32_t
 getMilliSeconds(void);
-
-/**
- * @fn validate_user
- * @brief Validate user
- *
- * @param user Username to check
- * @param password Password to check
- * @return True if user is valid, False if not.
- */
-bool
-validate_user(const char *user, const char *password);
-
-/**
- * @brief Start OTA update task
- *
- */
-void
-startOTA(void);
-
-/**
- * @brief Get the device service name object
- *
- * @param service_name
- * @param max
- */
-void
-get_device_service_name(char *service_name, size_t max);
-
-/**
- * @brief
- *
- * @param session_id
- * @param inbuf
- * @param inlen
- * @param outbuf
- * @param outlen
- * @param priv_data
- * @return esp_err_t
- */
-esp_err_t
-custom_prov_data_handler(uint32_t session_id,
-                         const uint8_t *inbuf,
-                         ssize_t inlen,
-                         uint8_t **outbuf,
-                         ssize_t *outlen,
-                         void *priv_data);
-
-/**
- * @brief
- *
- * @param name
- * @param username
- * @param pop
- * @param transport
- */
-void
-wifi_prov_print_qr(const char *name, const char *username, const char *pop, const char *transport);
 
 #endif

@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en" class="">
+
+<head>
+  <meta charset='utf-8'>
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+  <title>Droplet Alpha node - Update</title>
+  <link rel="icon" href="favicon-32x32.png">
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+  <div style='text-align:left;display:inline-block;color:#eaeaea;min-width:340px;'>
+    <div style='text-align:center;color:#eaeaea;'><noscript>To use Droplet admin interface, please enable JavaScript<br></noscript>
+      <h3>Droplet Alpha</h3>
+    </div>
+    <div style='padding:0;' id='l1' name='l1'></div>
+    <div id=but3d style="display: block;"></div>
+    <p>
+      <div>
+        <h3>Settings for droplet</h3>
+        <form id=but3 class="button" action='/upd-droplet' method='get'>
+          <fieldset>
+            Security Key (32):
+            <input type="password" name="key" value="01234567890123456789012345678901"><br><br>
+            <input type="checkbox" name="bforward" value="true" />            
+            <label for="bforward">Enable packet forward (enable)</label><br><br>
+            <input type="checkbox" name="blr" value="true" />
+            <label for="bforward">Enable Long Range (enable)</label><br><br>
+            ttl (32):
+            <input type="text" name="ttl" value="32"><br><br>
+            <button class="bgrn bgrn:hover">Save</button>
+          </fieldset>
+        </form>
+      </div>
+    </p>
+    
+    <p>
+      <div style='text-align:right;font-size:11px;'><hr />
+      <form id=but14 style="display: block;" action='index.html' method='get'><button class="byell">Main Menu</button></form>
+      <hr /><a href='https://vscp.org' target='_blank' style='color:#aaa;'>Alpha Droplet -- vscp.org</a>
+      </div>
+    </p>
+  </div>
+</body>
+
+</html>

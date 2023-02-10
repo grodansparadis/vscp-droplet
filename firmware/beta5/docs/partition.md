@@ -1,0 +1,17 @@
+# Partitions
+
+For a 4M device the partions looks like this
+
+| # Name | Type | SubType | Offset | Size | Flags |
+| ------ | ---- | ------- | ------ | ---- | ----- |
+| nvs        | data | nvs      | 0xd000     | 32K | 
+| factory    | data | nvs      | 0x15000    | 16K |
+| log_status | data | nvs      | 0x19000    | 16K |
+| otadata    | data | ota      | 0x1d000    | 8K |
+| phy_init   | data | phy      | 0x1f000    | 4K |
+| ota_0      | app  | ota_0    | 0x20000    | 1856K |
+| ota_1      | app  | ota_1    | 0x1f0000   | 1856K |
+| coredump   | data | coredump | 0x3c0000   | 64K |
+| #log_info  | data | 0xfe     | 0x3d0000   | 64K |
+| #console   | data | spiffs   | 0x3e0000   | 64K |
+| web        | data | spiffs   | 0x3d0000   | 192K |
