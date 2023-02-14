@@ -131,8 +131,8 @@ transport_t g_tr_mqtt                        = {}; // MQTT
 // Logging
 // int16_t g_write2Stdout = 0;     // Enable write to standard out
 
-static void
-vscp_heartbeat_task(void *pvParameter);
+//static void
+//vscp_heartbeat_task(void *pvParameter);
 static void
 vscp_espnow_send_task(void *pvParameter);
 
@@ -230,26 +230,26 @@ node_persistent_config_t g_persistent = {
   .vscpLinkKey      = { 0 }, // VSCP_DEFAULT_KEY32,
 
   // MQTT
-  .mqttEnable   = true,
-  .mqttUrl      = { 0 },
-  .mqttPort     = 1883,
-  .mqttClientid = "{{node}}-{{guid}}",
-  .mqttUsername = "vscp",
-  .mqttPassword = "secret",
-  .mqttQos      = 0,
-  .mqttRetain   = 0,
-  .mqttSub      = "vscp/{{guid}}/pub/#",
-  .mqttPub      = "vscp/{{guid}}/{{class}}/{{type}}/{{index}}",
-  .mqttVerification = {0},
-  .mqttLwTopic = {0},
-  .mqttLwMessage = {0},
-  .mqttLwQos = 0,
-  .mqttLwRetain = false;
+  .mqttEnable       = true,
+  .mqttUrl          = { 0 },
+  .mqttPort         = 1883,
+  .mqttClientid     = "{{node}}-{{guid}}",
+  .mqttUsername     = "vscp",
+  .mqttPassword     = "secret",
+  .mqttQos          = 0,
+  .mqttRetain       = 0,
+  .mqttSub          = "vscp/{{guid}}/pub/#",
+  .mqttPub          = "vscp/{{guid}}/{{class}}/{{type}}/{{index}}",
+  .mqttVerification = { 0 },
+  .mqttLwTopic      = { 0 },
+  .mqttLwMessage    = { 0 },
+  .mqttLwQos        = 0,
+  .mqttLwRetain     = false,
 
   // Droplet
   .dropletEnable                = true,
   .dropletLongRange             = false,
-  .droppletChannel              = 0, // Use wifi channel
+  .dropletChannel               = 0, // Use wifi channel
   .dropletTtl                   = 32,
   .dropletSizeQueue             = 32,                     // Size fo input queue
   .dropletForwardEnable         = true,                   // Forward when packets are received
@@ -487,19 +487,18 @@ readPersistentConfigs(void)
   // VSCP Link ----------------------------------------------------------------
 
   // VSCP Link enable
-  rv     = nvs_get_u8(g_nvsHandle, "vscp_enable", &val);
+  rv = nvs_get_u8(g_nvsHandle, "vscp_enable", &val);
   if (rv != ESP_OK) {
     ESP_LOGE(TAG, "Failed to read 'VSCP link enable' will be set to default. ret=%d", rv);
     val = (uint8_t) g_persistent.vscplinkEnable;
-    rv = nvs_set_u8(g_nvsHandle, "vscp_enable", g_persistent.vscplinkEnable);
+    rv  = nvs_set_u8(g_nvsHandle, "vscp_enable", g_persistent.vscplinkEnable);
     if (rv != ESP_OK) {
       ESP_LOGE(TAG, "Failed to save VSCP link enable");
     }
   }
   else {
-    g_persistent.vscplinkEnable = (bool)val;
+    g_persistent.vscplinkEnable = (bool) val;
   }
-
 
   // VSCP Link host
   length = sizeof(g_persistent.vscplinkUrl);
@@ -616,17 +615,17 @@ readPersistentConfigs(void)
   // MQTT ----------------------------------------------------------------
 
   // VSCP Link enable
-  rv     = nvs_get_u8(g_nvsHandle, "mqtt_enable", &val);
+  rv = nvs_get_u8(g_nvsHandle, "mqtt_enable", &val);
   if (rv != ESP_OK) {
     ESP_LOGE(TAG, "Failed to read 'MQTT enable' will be set to default. ret=%d", rv);
     val = (uint8_t) g_persistent.mqttEnable;
-    rv = nvs_set_u8(g_nvsHandle, "mwtt_enable", g_persistent.mqttEnable);
+    rv  = nvs_set_u8(g_nvsHandle, "mwtt_enable", g_persistent.mqttEnable);
     if (rv != ESP_OK) {
       ESP_LOGE(TAG, "Failed to save MQTT enable");
     }
   }
   else {
-    g_persistent.mqttEnable = (bool)val;
+    g_persistent.mqttEnable = (bool) val;
   }
 
   // MQTT host
@@ -707,17 +706,17 @@ readPersistentConfigs(void)
   // WEB server ----------------------------------------------------------------
 
   // WEB enable
-  rv     = nvs_get_u8(g_nvsHandle, "web_enable", &val);
+  rv = nvs_get_u8(g_nvsHandle, "web_enable", &val);
   if (rv != ESP_OK) {
     ESP_LOGE(TAG, "Failed to read 'web enable' will be set to default. ret=%d", rv);
     val = (uint8_t) g_persistent.webEnable;
-    rv = nvs_set_u8(g_nvsHandle, "web_enable", g_persistent.webEnable);
+    rv  = nvs_set_u8(g_nvsHandle, "web_enable", g_persistent.webEnable);
     if (rv != ESP_OK) {
       ESP_LOGE(TAG, "Failed to save web enable");
     }
   }
   else {
-    g_persistent.webEnable = (bool)val;
+    g_persistent.webEnable = (bool) val;
   }
 
   // WEB port
@@ -754,17 +753,17 @@ readPersistentConfigs(void)
   // Droplet ----------------------------------------------------------------
 
   // VSCP Link enable
-  rv     = nvs_get_u8(g_nvsHandle, "drop_enable", &val);
+  rv = nvs_get_u8(g_nvsHandle, "drop_enable", &val);
   if (rv != ESP_OK) {
     ESP_LOGE(TAG, "Failed to read 'Droplet enable' will be set to default. ret=%d", rv);
     val = (uint8_t) g_persistent.dropletEnable;
-    rv = nvs_set_u8(g_nvsHandle, "drop_enable", g_persistent.dropletEnable);
+    rv  = nvs_set_u8(g_nvsHandle, "drop_enable", g_persistent.dropletEnable);
     if (rv != ESP_OK) {
       ESP_LOGE(TAG, "Failed to save VSCP link enable");
     }
   }
   else {
-    g_persistent.dropletEnable = (bool)val;
+    g_persistent.dropletEnable = (bool) val;
   }
 
   // Long Range
@@ -781,9 +780,9 @@ readPersistentConfigs(void)
   }
 
   // Channel
-  rv = nvs_get_u8(g_nvsHandle, "drop_ch", &g_persistent.droppletChannel);
+  rv = nvs_get_u8(g_nvsHandle, "drop_ch", &g_persistent.dropletChannel);
   if (ESP_OK != rv) {
-    rv = nvs_set_u8(g_nvsHandle, "drop_ch", g_persistent.droppletChannel);
+    rv = nvs_set_u8(g_nvsHandle, "drop_ch", g_persistent.dropletChannel);
     if (rv != ESP_OK) {
       ESP_LOGE(TAG, "Failed to update droplet channel");
     }
@@ -1622,50 +1621,50 @@ led_task(void *pvParameter)
   }
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// vscp_heartbeat_task
-//
-// Sent periodically as a broadcast to all zones/subzones
-//
+// ///////////////////////////////////////////////////////////////////////////////
+// // vscp_heartbeat_task
+// //
+// // Sent periodically as a broadcast to all zones/subzones
+// //
 
-static void
-vscp_heartbeat_task(void *pvParameter)
-{
-  esp_err_t ret                       = 0;
-  uint8_t dest_addr[ESP_NOW_ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
-  uint8_t buf[DROPLET_MIN_FRAME + 3]; // Three byte data
-  size_t size  = sizeof(buf);
-  int recv_seq = 0;
+// static void
+// vscp_heartbeat_task(void *pvParameter)
+// {
+//   esp_err_t ret                       = 0;
+//   uint8_t dest_addr[ESP_NOW_ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+//   uint8_t buf[DROPLET_MIN_FRAME + 3]; // Three byte data
+//   size_t size  = sizeof(buf);
+//   int recv_seq = 0;
 
-  // Create Heartbeat event
-  if (VSCP_ERROR_SUCCESS != (ret = droplet_build_l1_heartbeat(buf, size, g_persistent.nodeGuid))) {
-    ESP_LOGE(TAG, "Could not create heartbeat event, will exit task. VSCP rv %d", ret);
-    goto ERROR;
-  }
+//   // Create Heartbeat event
+//   if (VSCP_ERROR_SUCCESS != (ret = droplet_build_l1_heartbeat(buf, size, g_persistent.nodeGuid))) {
+//     ESP_LOGE(TAG, "Could not create heartbeat event, will exit task. VSCP rv %d", ret);
+//     goto ERROR;
+//   }
 
-  ESP_LOGI(TAG, "Start sending VSCP heartbeats");
+//   ESP_LOGI(TAG, "Start sending VSCP heartbeats");
 
-  while (true) {
+//   while (true) {
 
-    ESP_LOGI(TAG, "Sending heartbeat.");
-    ret =
-      droplet_send(dest_addr, false, VSCP_ENCRYPTION_NONE, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
-    if (ret != ESP_OK) {
-      ESP_LOGE(TAG, "Failed to send heartbeat. ret = %d", ret);
-    }
-    // uint32_t hf = esp_get_free_heap_size();
-    // heap_caps_check_integrity_all(true);
-    // ESP_LOGI(TAG, "VSCP heartbeat sent - ret=0x%X heap=%X", (unsigned int) ret, (unsigned int) hf);
+//     ESP_LOGI(TAG, "Sending heartbeat.");
+//     ret =
+//       droplet_send(dest_addr, false, VSCP_ENCRYPTION_NONE, g_persistent.pmk, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
+//     if (ret != ESP_OK) {
+//       ESP_LOGE(TAG, "Failed to send heartbeat. ret = %d", ret);
+//     }
+//     // uint32_t hf = esp_get_free_heap_size();
+//     // heap_caps_check_integrity_all(true);
+//     // ESP_LOGI(TAG, "VSCP heartbeat sent - ret=0x%X heap=%X", (unsigned int) ret, (unsigned int) hf);
 
-    vTaskDelay(VSCP_HEART_BEAT_INTERVAL / portTICK_PERIOD_MS);
-  }
+//     vTaskDelay(VSCP_HEART_BEAT_INTERVAL / portTICK_PERIOD_MS);
+//   }
 
-  // ESP_ERROR_CONTINUE(ret != ESP_OK, "<%s>", esp_err_to_name(ret));
+//   // ESP_ERROR_CONTINUE(ret != ESP_OK, "<%s>", esp_err_to_name(ret));
 
-ERROR:
-  ESP_LOGW(TAG, "Heartbeat task exit %d", ret);
-  vTaskDelete(NULL);
-}
+// ERROR:
+//   ESP_LOGW(TAG, "Heartbeat task exit %d", ret);
+//   vTaskDelete(NULL);
+// }
 
 ///////////////////////////////////////////////////////////////////////////////
 // app_main
@@ -1969,7 +1968,7 @@ app_main(void)
   // ----------------------------------------------------------------------------
 
   // Initialize droplet
-  droplet_config_t droplet_config = { .channel                = g_persistent.droppletChannel,
+  droplet_config_t droplet_config = { .channel                = g_persistent.dropletChannel,
                                       .ttl                    = g_persistent.dropletTtl,
                                       .bForwardEnable         = g_persistent.dropletForwardEnable,
                                       .sizeQueue              = g_persistent.dropletSizeQueue,
@@ -1989,7 +1988,7 @@ app_main(void)
     }
 
     // Start heartbeat task vscp_heartbeat_task
-    xTaskCreate(&vscp_heartbeat_task, "vscp_heartbeat_task", 4096, NULL, 5, NULL);
+    //xTaskCreate(&vscp_heartbeat_task, "vscp_heartbeat_task", 4096, NULL, 5, NULL);
   }
 
   ESP_LOGI(TAG, "espnow initializated");
@@ -2020,7 +2019,7 @@ app_main(void)
     ESP_LOGE(TAG, "Could not create heartbeat event, will exit task. VSCP rv %d", ret);
   }
 
-  ret = droplet_send(dest_addr, false, VSCP_ENCRYPTION_NONE, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
+  ret = droplet_send(dest_addr, false, VSCP_ENCRYPTION_NONE, g_persistent.pmk, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
   if (ESP_OK != ret) {
     ESP_LOGE(TAG, "Could not send droplet start event. rv %d", ret);
   }

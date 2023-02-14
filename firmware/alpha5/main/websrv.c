@@ -1710,7 +1710,7 @@ config_droplet_get_handler(httpd_req_t *req)
 
   sprintf(buf,
           "<br>Use channel (0 is current):<input type=\"text\" name=\"channel\" value=\"%d\" >",
-          g_persistent.droppletChannel);
+          g_persistent.dropletChannel);
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
   sprintf(buf, "<br>Time to live (32):<input type=\"text\" name=\"ttl\" value=\"%d\" >", g_persistent.dropletTtl);
@@ -1850,9 +1850,9 @@ do_config_droplet_get_handler(httpd_req_t *req)
       // channel
       if (ESP_OK == (rv = httpd_query_key_value(buf, "channel", param, WEBPAGE_PARAM_SIZE))) {
         ESP_LOGI(TAG, "Found query parameter => channel=%s", param);
-        g_persistent.droppletChannel = atoi(param);
+        g_persistent.dropletChannel = atoi(param);
         // Write changed value to persistent storage
-        rv = nvs_set_u8(g_nvsHandle, "drop_ch", g_persistent.droppletChannel);
+        rv = nvs_set_u8(g_nvsHandle, "drop_ch", g_persistent.dropletChannel);
         if (rv != ESP_OK) {
           ESP_LOGE(TAG, "Failed to update droplet channel");
         }

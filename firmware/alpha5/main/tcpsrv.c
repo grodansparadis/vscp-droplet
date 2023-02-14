@@ -1,7 +1,7 @@
 /*
   File: tcpsrv.c
 
-  VSCP Wireless CAN4VSCP Gateway (VSCP-WCANG)
+  VSCP tcp/ip link server
 
   This file is part of the VSCP (https://www.vscp.org)
 

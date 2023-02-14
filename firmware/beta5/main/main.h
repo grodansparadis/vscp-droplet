@@ -38,6 +38,8 @@
 #include <vscp.h>
 #include <vscp-droplet.h>
 
+#define NODETYPE VSCP_DROPLET_BETA
+
 #define CONNECTED_LED_GPIO_NUM 2
 #define ACTIVE_LED_GPIO_NUM    3
 #define GPIO_OUTPUT_PIN_SEL    ((1ULL << CONNECTED_LED_GPIO_NUM) | (1ULL << ACTIVE_LED_GPIO_NUM))
@@ -82,7 +84,6 @@ typedef struct {
 #define DEFAULT_BLE_ENABLE       true
 #define DEFAULT_ADVERTISE_ENABLE true
 
-
 // ----------------------------------------------------------------------------
 
 typedef enum {
@@ -98,17 +99,17 @@ typedef enum {
 typedef struct {
 
   // Module
+  bool bProvisioned;    // Node has got channel and pmk from alpha node if true
   char nodeName[32];    // User name for node
   uint8_t pmk[32];      // Primary key (16 (EAS128)/24(AES192)/32(AES256))
   uint8_t nodeGuid[16]; // GUID for node (default: Constructed from MAC address)
   uint8_t startDelay;   // Delay before wifi is enabled (to charge cap)
   uint32_t bootCnt;     // Number of restarts (not editable)
 
-
   // Droplet
   bool dropletLongRange;             // Enable long range mode
   uint8_t dropletSizeQueue;          // Input queue size
-  uint8_t droppletChannel;           // Channel to use (zero is current)
+  uint8_t dropletChannel;            // Channel to use (zero is current)
   uint8_t dropletTtl;                // Default ttl
   bool dropletForwardEnable;         // Forward when packets are received
   uint8_t dropletEncryption;         // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256
@@ -124,29 +125,18 @@ typedef struct {
 */
 #define ESPNOW_SIZE_TX_BUF 10 /*!< Size for transmitt buffer >*/
 #define ESPNOW_SIZE_RX_BUF 20 /*!< Size for receive buffer >*/
-
 #define ESPNOW_MAXDELAY 512 // Ticks to wait for send queue access
-
-/* ESPNOW can work in both station and softap mode. It is configured in menuconfig. */
-// #if CONFIG_ESPNOW_WIFI_MODE_STATION
-// #define ESPNOW_WIFI_MODE WIFI_MODE_STA
-// #define ESPNOW_WIFI_IF   ESP_IF_WIFI_STA
-// #else
-// #define ESPNOW_WIFI_MODE WIFI_MODE_APSTA // WIFI_MODE_AP
-// #define ESPNOW_WIFI_IF   ESP_IF_WIFI_AP
-// #endif
-
 #define ESPNOW_QUEUE_SIZE 6
 
 #define IS_BROADCAST_ADDR(addr) (memcmp(addr, s_vscp_broadcast_mac, ESP_NOW_ETH_ALEN) == 0)
 
 // Beta node states
-typedef enum {
-  MAIN_STATE_WORK, // Standard working state
-  MAIN_STATE_INIT, // Active state during init until wifi is connected
-  MAIN_STATE_PROV, // Active state during provisioning
-  MAIN_STATE_SET_DEFAULTS
-} beta_node_states_t;
+// typedef enum {
+//   MAIN_STATE_WORK, // Standard working state
+//   MAIN_STATE_INIT, // Active state during init until wifi is connected
+//   MAIN_STATE_PROV, // Active state during provisioning
+//   MAIN_STATE_SET_DEFAULTS
+// } beta_node_states_t;
 
 ESP_EVENT_DECLARE_BASE(ALPHA_EVENT); // declaration of the alpha events family
 

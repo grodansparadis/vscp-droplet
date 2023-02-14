@@ -160,7 +160,7 @@ typedef struct {
   bool dropletEnable;
   bool dropletLongRange;             // Enable long range mode
   uint8_t dropletSizeQueue;          // Input queue size
-  uint8_t droppletChannel;           // Channel to use (zero is current)
+  uint8_t dropletChannel;           // Channel to use (zero is current)
   uint8_t dropletTtl;                // Default ttl
   bool dropletForwardEnable;         // Forward when packets are received
   uint8_t dropletEncryption;         // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256

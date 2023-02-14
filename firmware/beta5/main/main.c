@@ -46,24 +46,23 @@
 
 #include <esp_check.h>
 #include <esp_crc.h>
-#include <esp_http_client.h>
 #include <esp_https_ota.h>
 #include <esp_now.h>
 #include <esp_event_base.h>
 #include <esp_event.h>
-#include <esp_http_server.h>
+#include <esp_random.h>
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_ota_ops.h>
 #include <esp_task_wdt.h>
 #include <esp_timer.h>
-#include <esp_tls_crypto.h>
 #include <esp_wifi.h>
+#include "esp_crc.h"
 #include <nvs_flash.h>
 #include <esp_spiffs.h>
 #include <esp_event.h>
 
-#include <esp_crt_bundle.h>
+// #include <esp_crt_bundle.h>
 
 #include <vscp.h>
 #include <vscp_class.h>
@@ -88,7 +87,7 @@ extern const uint8_t server_cert_pem_end[] asm("_binary_ca_cert_pem_end");
 esp_netif_t *g_netif = NULL;
 
 // Holds alpha node states
-beta_node_states_t g_state = MAIN_STATE_INIT;
+//beta_node_states_t g_state = MAIN_STATE_INIT;
 
 // Event source task related definitions
 ESP_EVENT_DEFINE_BASE(BETA_EVENT);
@@ -115,8 +114,6 @@ static button_handle_t g_btns[BUTTON_CNT] = { 0 };
 static void
 vscp_heartbeat_task(void *pvParameter);
 
-static void
-vscp_espnow_send_task(void *pvParameter);
 
 enum {
   VSCP_SEND_STATE_NONE,
@@ -182,16 +179,17 @@ const blink_step_t test_blink[] = {
 node_persistent_config_t g_persistent = {
 
   // General
-  .nodeName   = "Beta Node",
-  .pmk        = { 0 },
-  .nodeGuid   = { 0 }, // GUID for unit
-  .startDelay = 2,
-  .bootCnt    = 0,
+  .bProvisioned = false, // Node rhas not been provisioned
+  .nodeName     = "Beta Node",
+  .pmk          = { 0 }, // Primary key
+  .nodeGuid     = { 0 }, // GUID for unit
+  .startDelay   = 2,
+  .bootCnt      = 0,
 
   // Droplet
-  .dropletLongRange             = false,
-  .droppletChannel              = 0, // Use wifi channel
-  .dropletTtl                   = 32,
+  .dropletLongRange             = false,                  // No long range mode by default
+  .dropletChannel               = 1,                      // Use wifi channel
+  .dropletTtl                   = 32,                     // Hops for forwarded frames
   .dropletSizeQueue             = 32,                     // Size fo input queue
   .dropletForwardEnable         = true,                   // Forward when packets are received
   .dropletEncryption            = VSCP_ENCRYPTION_AES128, // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256
@@ -284,8 +282,18 @@ readPersistentConfigs(void)
   size_t length = sizeof(buf);
   uint8_t val;
 
-  // Set default primary key
-  // vscp_fwhlp_hex2bin(g_persistent.vscpLinkKey, 32, VSCP_DEFAULT_KEY32);
+  // Provisioned
+  rv = nvs_get_u8(g_nvsHandle, "provision", &val);
+  if (ESP_OK != rv) {
+    val = (uint8_t) g_persistent.bProvisioned;
+    rv  = nvs_set_u8(g_nvsHandle, "provision", g_persistent.bProvisioned);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to update provisioned state");
+    }
+  }
+  else {
+    g_persistent.bProvisioned = (bool) val;
+  }
 
   // boot counter
   rv = nvs_get_u32(g_nvsHandle, "boot_counter", &g_persistent.bootCnt);
@@ -355,16 +363,21 @@ readPersistentConfigs(void)
   length = 32;
   rv     = nvs_get_blob(g_nvsHandle, "pmk", g_persistent.pmk, &length);
   if (rv != ESP_OK) {
-    const char key[] = VSCP_DEFAULT_KEY32;
-    const char *pos  = key;
-    for (int i = 0; i < 32; i++) {
-      sscanf(pos, "%2hhx", &g_persistent.pmk[i]);
-      pos += 2;
-    }
+
+    // We need to generate a new pmk
+    esp_fill_random(g_persistent.pmk, sizeof(g_persistent.pmk));
+    ESP_LOGW(TAG, "----------> New pmk generated <----------");
+
     rv = nvs_set_blob(g_nvsHandle, "pmk", g_persistent.pmk, 32);
     if (rv != ESP_OK) {
       ESP_LOGE(TAG, "Failed to write node pmk to nvs. rv=%d", rv);
     }
+  }
+
+  // If not provisioned we list dump of key on serial interface
+  if (!g_persistent.bProvisioned) {
+    ESP_LOGI(TAG, "Unprovisioned pmk");
+    ESP_LOG_BUFFER_HEXDUMP(TAG, g_persistent.pmk, sizeof(g_persistent.pmk), ESP_LOG_INFO);
   }
 
   // GUID
@@ -425,13 +438,15 @@ readPersistentConfigs(void)
   }
 
   // Channel
-  rv = nvs_get_u8(g_nvsHandle, "drop_ch", &g_persistent.droppletChannel);
+  rv = nvs_get_u8(g_nvsHandle, "drop_ch", &g_persistent.dropletChannel);
   if (ESP_OK != rv) {
-    rv = nvs_set_u8(g_nvsHandle, "drop_ch", g_persistent.droppletChannel);
+    rv = nvs_set_u8(g_nvsHandle, "drop_ch", g_persistent.dropletChannel);
     if (rv != ESP_OK) {
       ESP_LOGE(TAG, "Failed to update droplet channel");
     }
   }
+
+  g_persistent.dropletChannel = 9;
 
   // Default queue size
   rv = nvs_get_u8(g_nvsHandle, "drop_qsize", &g_persistent.dropletSizeQueue);
@@ -951,104 +966,104 @@ system_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, v
 
   if (event_base == WIFI_EVENT) {
 
-    switch (event_id) {
+    //     switch (event_id) {
 
-      case WIFI_EVENT_WIFI_READY: {
-        // Set channel
-        ESP_ERROR_CHECK(esp_wifi_set_channel(DROPLET_CHANNEL, WIFI_SECOND_CHAN_NONE));
-      } break;
+    //       case WIFI_EVENT_WIFI_READY: {
+    //         // Set channel
+    //         ESP_ERROR_CHECK(esp_wifi_set_channel(DROPLET_CHANNEL, WIFI_SECOND_CHAN_NONE));
+    //       } break;
 
-      case WIFI_EVENT_STA_START: {
-        ESP_LOGI(TAG, "Connecting........");
-        esp_wifi_connect();
-      }
+    //       case WIFI_EVENT_STA_START: {
+    //         ESP_LOGI(TAG, "Connecting........");
+    //         //esp_wifi_connect();
+    //       }
 
-      case WIFI_EVENT_AP_STACONNECTED: {
-        wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *) event_data;
-        // ESP_LOGI(TAG, "station " MACSTR " join, AID=%d", MAC2STR(event->mac), (int)event->aid);
-        s_ap_staconnected_flag = true;
-        break;
-      }
+    //       case WIFI_EVENT_AP_STACONNECTED: {
+    //         wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *) event_data;
+    //         // ESP_LOGI(TAG, "station " MACSTR " join, AID=%d", MAC2STR(event->mac), (int)event->aid);
+    //         s_ap_staconnected_flag = true;
+    //         break;
+    //       }
 
-      case WIFI_EVENT_AP_STADISCONNECTED: {
-        wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *) event_data;
-        // ESP_LOGI(TAG, "station " MACSTR " leave, AID=%d", MAC2STR(event->mac), ((int)event->aid);
-        s_ap_staconnected_flag = false;
-        break;
-      }
+    //       case WIFI_EVENT_AP_STADISCONNECTED: {
+    //         wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *) event_data;
+    //         // ESP_LOGI(TAG, "station " MACSTR " leave, AID=%d", MAC2STR(event->mac), ((int)event->aid);
+    //         s_ap_staconnected_flag = false;
+    //         break;
+    //       }
 
-      case WIFI_EVENT_STA_CONNECTED: {
-        wifi_event_sta_connected_t *event = (wifi_event_sta_connected_t *) event_data;
-        ESP_LOGI(TAG,
-                 "Connected to %s (BSSID: " MACSTR ", Channel: %d)",
-                 event->ssid,
-                 MAC2STR(event->bssid),
-                 event->channel);
-        s_sta_connected_flag = true;
-        break;
-      }
+    //       case WIFI_EVENT_STA_CONNECTED: {
+    //         wifi_event_sta_connected_t *event = (wifi_event_sta_connected_t *) event_data;
+    //         ESP_LOGI(TAG,
+    //                  "Connected to %s (BSSID: " MACSTR ", Channel: %d)",
+    //                  event->ssid,
+    //                  MAC2STR(event->bssid),
+    //                  event->channel);
+    //         s_sta_connected_flag = true;
+    //         break;
+    //       }
 
-      case WIFI_EVENT_STA_DISCONNECTED: {
-        ESP_LOGI(TAG, "sta disconnect");
-        s_sta_connected_flag = false;
-        ESP_LOGI(TAG, "Disconnected. Connecting to the AP again...");
-        g_state = MAIN_STATE_INIT;
-        esp_wifi_connect();
-        break;
-      }
-#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
-      case WIFI_EVENT_AP_STACONNECTED:
-        ESP_LOGI(TAG, "SoftAP transport: Connected!");
-        break;
-      case WIFI_EVENT_AP_STADISCONNECTED:
-        ESP_LOGI(TAG, "SoftAP transport: Disconnected!");
-        break;
-#endif
-      default:
-        break;
-    }
+    //       case WIFI_EVENT_STA_DISCONNECTED: {
+    //         ESP_LOGI(TAG, "sta disconnect");
+    //         s_sta_connected_flag = false;
+    //         ESP_LOGI(TAG, "Disconnected. Connecting to the AP again...");
+    //         g_state = MAIN_STATE_INIT;
+    //         esp_wifi_connect();
+    //         break;
+    //       }
+    // #ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
+    //       case WIFI_EVENT_AP_STACONNECTED:
+    //         ESP_LOGI(TAG, "SoftAP transport: Connected!");
+    //         break;
+    //       case WIFI_EVENT_AP_STADISCONNECTED:
+    //         ESP_LOGI(TAG, "SoftAP transport: Disconnected!");
+    //         break;
+    // #endif
+    //       default:
+    //         break;
+    //     }
+    //   }
+    // Post 5.0 stable
+    // ---------------
+    // else if (event_base == ESP_HTTPS_OTA_EVENT) {
+    //   switch (event_id) {
+
+    //     case ESP_HTTPS_OTA_START: {
+    //       ;
+    //     } break;
+
+    //     case ESP_HTTPS_OTA_CONNECTED: {
+    //       ;
+    //     } break;
+
+    //     case ESP_HTTPS_OTA_GET_IMG_DESC: {
+    //       ;
+    //     } break;
+
+    //     case ESP_HTTPS_OTA_VERIFY_CHIP_ID: {
+    //       ;
+    //     } break;
+
+    //     case ESP_HTTPS_OTA_DECRYPT_CB: {
+    //       ;
+    //     } break;
+
+    //     case ESP_HTTPS_OTA_WRITE_FLASH: {
+    //       ;
+    //     } break;
+
+    //     case ESP_HTTPS_OTA_UPDATE_BOOT_PARTITION: {
+    //       ;
+    //     } break;
+
+    //     case ESP_HTTPS_OTA_FINISH: {
+    //       ;
+    //     } break;
+
+    //   case ESP_HTTPS_OTA_ABORT: {
+    //       ;
+    //     } break;
   }
-  // Post 5.0 stable
-  // ---------------
-  // else if (event_base == ESP_HTTPS_OTA_EVENT) {
-  //   switch (event_id) {
-
-  //     case ESP_HTTPS_OTA_START: {
-  //       ;
-  //     } break;
-
-  //     case ESP_HTTPS_OTA_CONNECTED: {
-  //       ;
-  //     } break;
-
-  //     case ESP_HTTPS_OTA_GET_IMG_DESC: {
-  //       ;
-  //     } break;
-
-  //     case ESP_HTTPS_OTA_VERIFY_CHIP_ID: {
-  //       ;
-  //     } break;
-
-  //     case ESP_HTTPS_OTA_DECRYPT_CB: {
-  //       ;
-  //     } break;
-
-  //     case ESP_HTTPS_OTA_WRITE_FLASH: {
-  //       ;
-  //     } break;
-
-  //     case ESP_HTTPS_OTA_UPDATE_BOOT_PARTITION: {
-  //       ;
-  //     } break;
-
-  //     case ESP_HTTPS_OTA_FINISH: {
-  //       ;
-  //     } break;
-
-  //   case ESP_HTTPS_OTA_ABORT: {
-  //       ;
-  //     } break;
-  // }
 
   else if (event_base == BETA_EVENT) {
     ESP_LOGI(TAG, "Beta event -----------------------------------------------------------> id=%ld", event_id);
@@ -1071,51 +1086,6 @@ led_task(void *pvParameter)
     cnt++;
     vTaskDelay(100 / portTICK_PERIOD_MS);
   }
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// vscp_heartbeat_task
-//
-// Sent periodically as a broadcast to all zones/subzones
-//
-
-static void
-vscp_heartbeat_task(void *pvParameter)
-{
-  esp_err_t ret                       = 0;
-  uint8_t dest_addr[ESP_NOW_ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
-  uint8_t buf[DROPLET_MIN_FRAME + 3]; // Three byte data
-  size_t size  = sizeof(buf);
-  int recv_seq = 0;
-
-  // Create Heartbeat event
-  if (VSCP_ERROR_SUCCESS != (ret = droplet_build_l1_heartbeat(buf, size, g_persistent.nodeGuid))) {
-    ESP_LOGE(TAG, "Could not create heartbeat event, will exit task. VSCP rv %d", ret);
-    goto ERROR;
-  }
-
-  ESP_LOGI(TAG, "Start sending VSCP heartbeats");
-
-  while (true) {
-
-    ESP_LOGI(TAG, "Sending heartbeat.");
-    ret =
-      droplet_send(dest_addr, false, VSCP_ENCRYPTION_NONE, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
-    if (ret != ESP_OK) {
-      ESP_LOGE(TAG, "Failed to send heartbeat. ret = %d", ret);
-    }
-    // uint32_t hf = esp_get_free_heap_size();
-    // heap_caps_check_integrity_all(true);
-    // ESP_LOGI(TAG, "VSCP heartbeat sent - ret=0x%X heap=%X", (unsigned int) ret, (unsigned int) hf);
-
-    vTaskDelay(VSCP_HEART_BEAT_INTERVAL / portTICK_PERIOD_MS);
-  }
-
-  // ESP_ERROR_CONTINUE(ret != ESP_OK, "<%s>", esp_err_to_name(ret));
-
-ERROR:
-  ESP_LOGW(TAG, "Heartbeat task exit %d", ret);
-  vTaskDelete(NULL);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1191,48 +1161,45 @@ app_main(void)
 
   g_ctrl_task_sem = xSemaphoreCreateBinary();
 
-  ESP_ERROR_CHECK(esp_netif_init());
-  ESP_ERROR_CHECK(esp_event_loop_create_default());
-  g_wifi_event_group = xEventGroupCreate();
+  /*
+    g_wifi_event_group = xEventGroupCreate();
 
-  /* esp_event_loop_args_t alpha_loop_config = {
-    .queue_size = 10,
-    .task_name = "alpha loop",
-    .task_priority = uxTaskPriorityGet(NULL),
-    .task_stack_size = 2048,
-    .task_core_id = tskNO_AFFINITY
-  };
+     esp_event_loop_args_t beta_loop_config = {
+      .queue_size = 10,
+      .task_name = "alpha loop",
+      .task_priority = uxTaskPriorityGet(NULL),
+      .task_stack_size = 2048,
+      .task_core_id = tskNO_AFFINITY
+    };
 
-  esp_event_loop_handle_t alpha_loop_handle;
-  ESP_ERROR_CHECK(esp_event_loop_create(&alpha_loop_config, &alpha_loop_handle));
+    esp_event_loop_handle_t beta_loop_handle;
+    ESP_ERROR_CHECK(esp_event_loop_create(&beta_loop_config, &beta_loop_handle));
 
-  ESP_ERROR_CHECK(esp_event_handler_register_with(alpha_loop_handle,
-                                                           BETA_EVENT,
-                                                           ESP_EVENT_ANY_ID,
-                                                           alpha_event_handler,
-                                                           NULL)); */
-
+    ESP_ERROR_CHECK(esp_event_handler_register_with(beta_loop_handle,
+                                                             BETA_EVENT,
+                                                             ESP_EVENT_ANY_ID,
+                                                             beta_event_handler,
+                                                             NULL));
+    */
   // Initialize Wi-Fi including netif with default config
-  g_netif = esp_netif_create_default_wifi_sta();
-
-  // #ifdef CONFIG_PROV_TRANSPORT_SOFTAP
-  //   g_netif = esp_netif_create_default_wifi_ap();
-  // #endif // CONFIG_PROV_TRANSPORT_SOFTAP
-
-  wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-  ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+  // g_netif = esp_netif_create_default_wifi_sta();
 
   if (led_indicator_start(g_led_handle, BLINK_PROVISIONING) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to start indicator light");
   }
 
-  ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &system_event_handler, NULL));
-  ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &system_event_handler, NULL));
-  ESP_ERROR_CHECK(esp_event_handler_register(BETA_EVENT, ESP_EVENT_ANY_ID, &system_event_handler, NULL));
+  // ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &system_event_handler, NULL));
+  // ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &system_event_handler, NULL));
+  // ESP_ERROR_CHECK(esp_event_handler_register(BETA_EVENT, ESP_EVENT_ANY_ID, &system_event_handler, NULL));
 
-  // Start Wi-Fi soft ap & station
-  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+  ESP_ERROR_CHECK(esp_netif_init());
+  ESP_ERROR_CHECK(esp_event_loop_create_default());
+  wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+  ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+  ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
   ESP_ERROR_CHECK(esp_wifi_start());
+  ESP_ERROR_CHECK(esp_wifi_set_channel(g_persistent.dropletChannel, WIFI_SECOND_CHAN_NONE));
 
   if (g_persistent.dropletLongRange) {
     ESP_ERROR_CHECK(
@@ -1243,23 +1210,6 @@ app_main(void)
   if (led_indicator_start(g_led_handle, BLINK_CONNECTING) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to start indicator lite");
   }
-
-  // Wait for Wi-Fi connection
-  // ESP_LOGI(TAG, "Wait for wifi connection...");
-  // esp_event_post(/*_to(alpha_loop_handle,*/ BETA_EVENT, BETA_GET_IP_ADDRESS_START, NULL, 0, portMAX_DELAY);
-  // {
-  //   EventBits_t ret;
-  //   uint8_t cnt = 20; // 20 seconds until reboot due to no IP address
-  //   while (!xEventGroupWaitBits(g_wifi_event_group, WIFI_CONNECTED_EVENT, false, true, 1000 / portTICK_PERIOD_MS)) {
-  //     if (--cnt == 0) {
-  //       // esp_wifi_disconnect();
-  //       // esp_restart();
-  //       vTaskDelay(2000 / portTICK_PERIOD_MS);
-  //     }
-  //     // ESP_LOGI(TAG, "Waiting for IP address. %d", cnt);
-  //   }
-  // }
-  // esp_event_post(/*_to(alpha_loop_handle,*/ BETA_EVENT, BETA_GET_IP_ADDRESS_STOP, NULL, 0, portMAX_DELAY);
 
   if (led_indicator_start(g_led_handle, BLINK_CONNECTED) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to start indicator light");
@@ -1341,7 +1291,8 @@ app_main(void)
   // ----------------------------------------------------------------------------
 
   // Initialize droplet
-  droplet_config_t droplet_config = { .channel                = g_persistent.droppletChannel,
+  droplet_config_t droplet_config = { .nodeType               = VSCP_DROPLET_BETA,
+                                      .channel                = g_persistent.dropletChannel,
                                       .ttl                    = g_persistent.dropletTtl,
                                       .bForwardEnable         = g_persistent.dropletForwardEnable,
                                       .sizeQueue              = g_persistent.dropletSizeQueue,
@@ -1352,6 +1303,9 @@ app_main(void)
   // Set primary key
   memcpy(droplet_config.pmk, g_persistent.pmk, 32);
 
+  // Set GUID
+  memcpy(droplet_config.nodeGuid, g_persistent.nodeGuid, 16);
+
   // Set callback for droplet receive events
   droplet_set_vscp_user_handler_cb(droplet_receive_cb);
 
@@ -1359,15 +1313,12 @@ app_main(void)
     ESP_LOGE(TAG, "Failed to initialize espnow");
   }
 
-  // Start heartbeat task vscp_heartbeat_task
-  xTaskCreate(&vscp_heartbeat_task, "vscp_heartbeat_task", 4096, NULL, 5, NULL);
+  
 
   ESP_LOGI(TAG, "espnow initializated");
 
   // startOTA();
 
-  // xTaskCreate(vscp_espnow_send_task, "vscp_espnow_send_task", 4096, NULL, 4, NULL);
-  // xTaskCreate(vscp_espnow_recv_task, "vscp_espnow_recv_task", 2048, NULL, 4, NULL);
 
   ESP_LOGI(TAG, "Going to work now!");
 
@@ -1381,9 +1332,9 @@ app_main(void)
     ESP_LOGE(TAG, "Could not create heartbeat event, will exit task. VSCP rv %d", ret);
   }
 
-  ret = droplet_send(dest_addr, false, VSCP_ENCRYPTION_NONE, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
+  ret = droplet_send(dest_addr, false, VSCP_ENCRYPTION_NONE, g_persistent.pmk, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
   if (ESP_OK != ret) {
-    ESP_LOGE(TAG, "Could not send droplet start event. rv %d", ret);
+    ESP_LOGE(TAG, "Could not send droplet start event. rv %X", ret);
   }
 
   /* const char *obj = "{"

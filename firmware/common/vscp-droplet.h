@@ -54,6 +54,11 @@
 extern "C" {
 #endif
 
+// Security
+
+#define DROPLET_KEY_LEN 32 // Secret key length (AES-128 use the first 16)
+#define DROPLET_IV_LEN  16 // The initialization vector (nonce) length
+
 /**
  * @brief Frame positions for data in the VSCP droplet frame
  */
@@ -78,25 +83,54 @@ extern "C" {
 #define DROPLET_MAX_DATA  128              // Max VSCP data (of possible 512 bytes) that a frame can hold
 #define DROPLET_MAX_FRAME DROPLET_MIN_FRAME + DROPLET_MAX_DATA
 
+typedef enum {
+  DROPLET_ALPHA_NODE = 0,
+  DROPLET_BETA_NODE,
+  DROPLET_GAMMA_NODE,
+} droplet_node_type_t;
+
+/*
+  The idel state is the normal state a node is in. This is where it does all it's
+  work if it has been initialized.
+
+  Alpha nodes can only be in the idle or one of the SRV states.
+  Beta nodes can be both in one of the SRV states and in one of the CLIENT states and in idle.
+  Gamma nodes can only be in CLIENT state and idle.
+*/
+typedef enum {
+  DROPLET_STATE_IDLE,        // Normal state for all nodes, but may be uninitialized.
+  DROPLET_STATE_CLIENT_INIT, // Initialization state for Beta/Gamma nodes.
+  DROPLET_STATE_SRV_INIT1,   // Server initialization state 1 (Alpha/Beta nodes)  Waiting for heartbeat.
+  DROPLET_STATE_SRV_INIT2,   // Server initialization state 2 (Alpha/Beta nodes). Waiting for new node on-line
+  DROPLET_STATE_CLIENT_OTA,  // OTA state for all nodes being updated.
+  DROPLET_STATE_SRV_OTA      // OTA state for Alpha/Beta/Gamma nodes that serve firmware.
+} droplet_state_t;
+
 /**
  * @brief Initialize the configuration of droplet
  */
 typedef struct {
-  uint8_t channel;             // Channel to use (zero is current)
-  uint8_t ttl;                 // Default ttl
-  bool bForwardEnable;         // Forward when packets are received
-  bool bForwardSwitchChannel;  // Forward data packet with exchange channel
-  uint8_t sizeQueue;           // Size of receive queue
-  uint8_t nEncryption;         // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256
-  bool bFilterAdjacentChannel; // Don't receive if from other channel
-  int filterWeakSignal;        // Filter onm RSSI (zero is no rssi filtering)
-  const uint8_t pmk[32];       // Primary master key (16 (EAS128)/24(AES192)/32(AES256))
+  droplet_node_type_t nodeType; // Alpha/Gamma/Beta
+  uint8_t channel;              // Channel to use (zero is current)
+  uint8_t ttl;                  // Default ttl
+  bool bForwardEnable;          // Forward when packets are received
+  bool bForwardSwitchChannel;   // Forward data packet with exchange channel
+  uint8_t sizeQueue;            // Size of receive queue
+  uint8_t nEncryption;          // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256
+  bool bFilterAdjacentChannel;  // Don't receive if from other channel
+  int filterWeakSignal;         // Filter onm RSSI (zero is no rssi filtering)
+  const uint8_t pmk[32];        // Primary master key (16 (EAS128)/24(AES192)/32(AES256))
+  const uint8_t nodeGuid[16];   // GUID for node.
 } droplet_config_t;
 
-// Security
-
-#define DROPLET_KEY_LEN 16 // Secret key length
-#define DROPLET_IV_LEN  16 // The initialization vector (nonce) length
+/*
+  Structure that holds data for node that should
+  be provisioned.
+*/
+typedef struct {
+  uint8_t mac[6];                    // MAC address for node to provision
+  uint8_t keyLocal[DROPLET_KEY_LEN]; // Local key for node
+} droplet_provisioning_t;
 
 /**
  * @brief   Droplet type data receive callback function
@@ -112,16 +146,12 @@ typedef struct {
  */
 typedef esp_err_t (*type_handle_t)(uint8_t *src_addr, void *data, size_t size, wifi_pkt_rx_ctrl_t *rx_ctrl);
 
-#define VSCP_HEART_BEAT_INTERVAL 30000 // Milliseconds between heartbeat events
+#define VSCP_HEART_BEAT_INTERVAL      30000 // Milliseconds between heartbeat events
+#define VSCP_INIT_HEART_BEAT_INTERVAL 500   // Milliseconds between heartbeat probe events
+#define VSCP_SET_KEY_INTERVAL         100   // Provisioning interval between set key events
 
 // Control states for droplet provisioning
 typedef enum { DROPLET_CTRL_INIT, DROPLET_CTRL_BOUND, DEOPLET_CTRL_MAX } droplet_ctrl_status_t;
-
-typedef enum {
-  DROPLET_ALPHA_NODE,
-  DROPLET_BETA_NODE,
-  DROPLET_GAMMA_NODE,
-} droplet_node_type_t;
 
 /**
  * @brief The channel on which the device sends packets
@@ -167,6 +197,7 @@ droplet_init(const droplet_config_t *config);
  *                  VSCP_ENCRYPTION_AES128         1
  *                  VSCP_ENCRYPTION_AES192         2
  *                  VSCP_ENCRYPTION_AES256         3
+ * @param pkey Pointer to 32 bit key used for encryption.
  * @param ttl   Time to live for frame. Will be decrease by one for every hop.
  * @param payload The frame data.
  * @param size  The size of the payload.
@@ -177,6 +208,7 @@ esp_err_t
 droplet_send(const uint8_t *dest_addr,
              bool bPreserveHeader,
              uint8_t nEncrypt,
+             uint8_t *pkey,
              uint8_t ttl,
              uint8_t *data,
              size_t size,
@@ -222,35 +254,36 @@ droplet_build_l1_heartbeat(uint8_t *buf, uint8_t len, const uint8_t *pguid);
 int
 droplet_build_l2_heartbeat(uint8_t *buf, uint8_t len, const uint8_t *pguid, const char *pname);
 
-
 /**
  * @fn droplet_sendEvent
  * @brief  Send event on droplet network
- * 
- * @param pev Event to send 
+ *
+ * @param pev Event to send
  * @param wait_ms Time in milliseconds to wait for send
  * @return esp_err_t Error code. ESP_OK if all is OK.
  */
 
 esp_err_t
-droplet_sendEvent(vscpEvent *pev, uint32_t wait_ms);
+droplet_sendEvent(vscpEvent *pev, uint8_t *pkey, uint32_t wait_ms);
 
 /**
  * @fn droplet_sendEventEx
  * @brief Send event ex on droplet network
- * 
+ *
  * @param pex Pointer to event ex to send.
+ * @param pkey Pointer to 32 bit key used for encryption.
  * @param wait_ms Time in milliseconds to wait for send
  * @return esp_err_t Error code. ESP_OK if all is OK.
  */
 esp_err_t
-droplet_sendEventEx(vscpEventEx *pex, uint32_t wait_ms);
+droplet_sendEventEx(vscpEventEx *pex, uint8_t *pkey, uint32_t wait_ms);
 
 /**
  * @fn droplet_getMinBufSizeEv
  * @brief Get minimum buffer size for a VSCP event
  *
- * @param pev Pointeŕ to event
+ * @param pev Pointer to event
+ * @param pkey Pointer to 32 bit key used for encryption.
  * @return size_t Needed buffer size or zero for error (invalid event pointer).
  */
 size_t
@@ -316,7 +349,7 @@ droplet_frameToEv(vscpEvent *pev, const uint8_t *buf, uint8_t len, uint32_t time
  * @return int VSCP_ERROR_SUCCES is returned if all goes well. Otherwise VSCP error code is returned.
  */
 int
-droplet_frameToEx(vscpEventEx *pex, const uint8_t *buf, uint8_t len, uint32_t timestamp);             
+droplet_frameToEx(vscpEventEx *pex, const uint8_t *buf, uint8_t len, uint32_t timestamp);
 
 /**
  * @brief Set the VSCP event receive handler callback
@@ -358,92 +391,6 @@ droplet_parse_vscp_json(vscpEvent *pev, const char *jsonVscpEventObj);
  */
 int
 droplet_create_vscp_json(char *strObj, size_t len, vscpEvent *pev);
-
-// ----------------------------------------------------------------------------
-
-/**
- * @brief Initialize the specified security info
- *
- *    - ESP_OK
- *    - ESP_ERR_INVALID_ARG
- */
-esp_err_t
-droplet_sec_init(void);
-
-/**
- * @brief Clear the specified security info
- *
- * @param[in]  sec  the security info to clear. This must not be NULL.
- *
- *    - ESP_OK
- *    - ESP_ERR_INVALID_ARG
- */
-esp_err_t
-droplet_sec_deinit(void);
-
-/**
- * @brief Set the security key info
- *
- *
- *    - ESP_OK
- *    - ESP_ERR_INVALID_ARG
- */
-esp_err_t
-droplet_sec_setkey(void);
-
-/**
- * @brief The authenticated encryption function.
- *        Encryption with 128 bit AES-CCM
- *
- * @note  the tag will be appended to the ciphertext
- *
- * @param[in]   sec        the security info used for encryption.
- * @param[in]   input      the buffer for the input data
- * @param[in]   ilen       the length of the input data
- * @param[out]  output     the buffer for the output data
- * @param[in]   output_len the length of the output buffer in bytes
- * @param[out]  olen       the actual number of bytes written to the output buffer
- * @param[in]   tag_len    the desired length of the authentication tag
- *
- * @return
- *    - ESP_OK
- *    - ESP_FAIL
- */
-esp_err_t
-droplet_sec_auth_encrypt(const uint8_t *input,
-                         size_t ilen,
-                         uint8_t *output,
-                         size_t output_len,
-                         size_t *olen,
-                         size_t tag_len);
-
-/**
- * @brief The authenticated decryption function.
- *        Decryption with 128 bit AES-CCM
- *
- * @note  the tag must be appended to the ciphertext
- *
- * @param[in]   sec        the security info used for encryption.
- * @param[in]   input      the buffer for the input data
- * @param[in]   ilen       the length of the input data
- * @param[out]  output     the buffer for the output data
- * @param[in]   output_len the length of the output buffer in bytes
- * @param[out]  olen       the actual number of bytes written to the output buffer
- * @param[in]   tag_len    the desired length of the authentication tag
- *
- * @return
- *    - ESP_OK
- *    - ESP_FAIL
- */
-esp_err_t
-droplet_sec_auth_decrypt(const uint8_t *input,
-                         size_t ilen,
-                         uint8_t *output,
-                         size_t output_len,
-                         size_t *olen,
-                         size_t tag_len);
-
-
 
 #ifdef __cplusplus
 }

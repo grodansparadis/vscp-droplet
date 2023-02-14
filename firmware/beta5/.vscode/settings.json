@@ -108,6 +108,8 @@
     "optional": "c",
     "limits": "c",
     "memory": "c",
-    "new": "c"
+    "new": "c",
+    "esp_crt_bundle.h": "c",
+    "vscp.h": "c"
   }
 }

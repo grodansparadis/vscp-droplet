@@ -382,7 +382,7 @@ vscp_link_callback_send(const void *pdata, vscpEvent *pev)
     pev->obid = pctx->id;
   }
 
-  if (ESP_OK != (ret = droplet_sendEvent(pev, 100))) {
+  if (ESP_OK != (ret = droplet_sendEvent(pev, NULL, 100))) {
     ESP_LOGE(TAG, "Failed to send event. rv = %d", ret);
     return VSCP_ERROR_ERROR;
   }
