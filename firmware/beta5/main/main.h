@@ -101,7 +101,8 @@ typedef struct {
   // Module
   bool bProvisioned;    // Node has got channel and pmk from alpha node if true
   char nodeName[32];    // User name for node
-  uint8_t pmk[32];      // Primary key (16 (EAS128)/24(AES192)/32(AES256))
+  uint8_t lkey[32];     // Local key (16 (EAS128)/24(AES192)/32(AES256))
+  uint8_t pmk[32];      // Primary key (16 (EAS128)/24(AES192)/32(AES256)) 
   uint8_t nodeGuid[16]; // GUID for node (default: Constructed from MAC address)
   uint8_t startDelay;   // Delay before wifi is enabled (to charge cap)
   uint32_t bootCnt;     // Number of restarts (not editable)

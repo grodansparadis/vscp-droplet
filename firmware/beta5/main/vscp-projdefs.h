@@ -18,30 +18,33 @@
 
 // ----------------------------------------------------------------------------
 
+// Node type for this node
+#define PRJDEF_NODE_TYPE        VSCP_DROPLET_BETA    
+
 // 16-bit nickname for node
-#define PROJDEF_NODE_NICKNAME   0
+#define PRJDEF_NODE_NICKNAME   0
 
 // GPIO number for init button
-#define INIT_BUTTON_PIN         0
+#define PRJDEF_INIT_BUTTON_PIN         0
 
 // GPIO number for indicator LED
-#define INDICATOR_LED_PIN       2
+#define PRJDEF_INDICATOR_LED_PIN       2
 
 // OTA mode
 // ESPNOW_OTA_INITATOR or ESPNOW_OTA_RESPONDEDER
 #define ESPNOW_OTA_MODE   ESPNOW_OTA_INITATOR
 // URL of server which hosts the firmware image.
-#define FIRMWARE_UPGRADE_URL            "https://193.188.2.51:443/downloads/alpha/hello_world.bin"
+#define PRJDEF_FIRMWARE_UPGRADE_URL            "https://193.188.2.51:443/downloads/alpha/hello_world.bin"
 
 // This allows you to skip the validation of OTA server certificate CN field.
-#define SKIP_COMMON_NAME_CHECK          false
+#define PRJDEF_SKIP_COMMON_NAME_CHECK          false
 
 // This allows you to bind specified interface in OTA example.
-#define FIRMWARE_UPGRADE_BIND_IF        false
+#define PRJDEF_FIRMWARE_UPGRADE_BIND_IF        false
 
 // Select which interface type of OTA data go through.
 // FIRMWARE_UPGRADE_BIND_IF_STA or EXAMPLE_FIRMWARE_UPGRADE_BIND_IF_ETH
-#define FIRMWARE_UPGRADE_BIND_IF_TYPE   FIRMWARE_UPGRADE_BIND_IF_STA
+#define PRJDEF_FIRMWARE_UPGRADE_BIND_IF_TYPE   FIRMWARE_UPGRADE_BIND_IF_STA
 
 // Wi-Fi provisioning component offers both, SoftAP and BLE transports. Choose one.
 // PROV_TRANSPORT_BLE or PROV_TRANSPORT_SOFTAP
@@ -50,64 +53,64 @@
 
 //
 // ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1 or ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2
-#define ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1
+#define PRJDEF_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1
 //#define ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2
 
 // This enables the production mode for security version 2.
 // PROV_SEC2_PROD_MODE or PROV_SEC2_DEV_MODE
-#define PROV_MODE   PROV_SEC2_PROD_MODE
+#define PRJDEF_PROV_MODE   PROV_SEC2_PROD_MODE
 
 // 
 // 1 = PROV_TRANSPORT_BLE, 2 = PROV_TRANSPORT_SOFTAP
-#define PROV_TRANSPORT                  1
+#define PRJDEF_PROV_TRANSPORT                  1
 
 // Enable reseting provisioned credentials and state machine after session failure.
 // This will restart the provisioning service after retries are exhausted.
-#define RESET_PROV_MGR_ON_FAILURE       true
+#define PRJDEF_RESET_PROV_MGR_ON_FAILURE       true
 
 // Set the Maximum retry to avoid reconnecting to an inexistent AP or if credentials
 // are misconfigured. Provisioned credentials are erased and internal state machine
 // is reset after this threshold is reached.
-#define PROV_MGR_MAX_RETRY_CNT          5
+#define PRJDEF_PROV_MGR_MAX_RETRY_CNT          5
 
 // Show the QR code for provisioning.
-#define PROV_SHOW_QR          true
+#define PRJDEF_PROV_SHOW_QR          true
 
 // This enables BLE 4.2 features for Bluedroid.
 // On IDF_TARGET_ESP32C3 || IDF_TARGET_ESP32S3
-#define PROV_USING_BLUEDROID  true
+#define PRJDEF_PROV_USING_BLUEDROID  true
 
-#define DROPLET_CHANNEL        0
+#define PRJDEF_DROPLET_CHANNEL        0
 
 // Wifi mode
 // ESPNOW_WIFI_MODE_STATION or ESPNOW_WIFI_MODE_STATION_SOFTAP
-#define DROPLET_WIFI_MODE      WIFI_MODE_APSTA
+#define PRJDEF_DROPLET_WIFI_MODE      WIFI_MODE_APSTA
 
 // ESP_IF_WIFI_AP or WIFI_MODE_STA
-#define DROPLET_WIFI_IF        ESP_IF_WIFI_AP
+#define PRJDEF_DROPLET_WIFI_IF        ESP_IF_WIFI_AP
 
 // Proof of Possession (PoP) string used to authorize session and derive shared key.
 //#define DROPLET_SESSION_POP    "ESPNOW VSCP node ver 1"
 
 // ESPNOW primary master for the example to use. The length of ESPNOW primary master must be 16 bytes.
-#define DROPLET_PMK            "pmk1234567890123"
+#define PRJDEF_DROPLET_PMK            "pmk1234567890123"
 
 // ESPNOW local master for the example to use. The length of ESPNOW local master must be 16 bytes.
-#define DROPLET_LMK            "lmk1234567890123"
+#define PRJDEF_DROPLET_LMK            "lmk1234567890123"
 
 // Select the ESP-NOW Sec Mode.
 // ESPNOW_SEC_INITATOR or ESPNOW_SEC_RESPONDER
-#define DROPLET_SEC_MODE       ESPNOW_SEC_INITATOR
+#define PRJDEF_DROPLET_SEC_MODE       ESPNOW_SEC_INITATOR
 
 // Select the ESP-NOW Prov Mode.
 // ESPNOW_PROV_INITATOR or ESPNOW_PROV_RESPONDER
-#define DROPLET_PROV_MODE      ESPNOW_PROV_INITATOR
+#define PRJDEF_DROPLET_PROV_MODE      ESPNOW_PROV_INITATOR
 
 // The channel on which sending and receiving ESPNOW data.
 //#define ESPNOW_CHANNEL        0
 
 // When enable long range, the PHY rate of ESP32 will be 512Kbps or 256Kbps 
-#define ESPNOW_ENABLE_LONG_RANGE      false
+#define PRJDEF_ESPNOW_ENABLE_LONG_RANGE      false
 
 /*!
   Max buffer for level II events. The buffer size is needed to

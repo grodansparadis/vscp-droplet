@@ -54,6 +54,13 @@
 extern "C" {
 #endif
 
+#define DROPLET_VERSION 0x00
+
+// Frame id
+
+#define DROPLET_ID_MSB 0x55
+#define DROPLET_ID_LSB (0xA0 + DROPLET_VERSION)
+
 // Security
 
 #define DROPLET_KEY_LEN 32 // Secret key length (AES-128 use the first 16)
@@ -62,22 +69,23 @@ extern "C" {
 /**
  * @brief Frame positions for data in the VSCP droplet frame
  */
-#define DROPLET_POS_PKTID 0 // Frame id (1)
-#define DROPLET_POS_TTL   1 // Time to live
+#define DROPLET_POS_ID       0 // Two byte droplet id (0x55/0xAx)  X = droplet protocol version
+#define DROPLET_POS_PKT_TYPE 2 // Encryption and droplet type (alpha/beta/gamma)
+#define DROPLET_POS_TTL      3 // Time to live
 // magic and crc form unique number that identify a frame
 // in the frame cache. id/ttl is not part of crc as ttl can
 // vary for the same frame (if forwarded)
-#define DROPLET_POS_MAGIC 2 // Frame random number (2)
+#define DROPLET_POS_MAGIC 4 // Frame random number (2)
 
-#define DROPLET_POS_DEST_ADDR 4 // Destination address for frame
+// #define DROPLET_POS_DEST_ADDR 4 // Destination address for frame
 
 // VSCP content
-#define DROPLET_POS_HEAD     10 // VSCP head bytes (2)
-#define DROPLET_POS_NICKNAME 12 // Node nickname (2)
-#define DROPLET_POS_CLASS    14 // VSCP class (2)
-#define DROPLET_POS_TYPE     16 // VSCP Type (2)
-#define DROPLET_POS_SIZE     18 // Data size (needed because of encryption padding)
-#define DROPLET_POS_DATA     19 // VSCP data (max 128 bytes)
+#define DROPLET_POS_HEAD     6  // VSCP head bytes (2)
+#define DROPLET_POS_NICKNAME 8  // Node nickname (2)
+#define DROPLET_POS_CLASS    10 // VSCP class (2)
+#define DROPLET_POS_TYPE     12 // VSCP Type (2)
+#define DROPLET_POS_SIZE     14 // Data size (needed because of encryption padding) (1)
+#define DROPLET_POS_DATA     15 // VSCP data (max 128 bytes)
 
 #define DROPLET_MIN_FRAME DROPLET_POS_DATA // Number of bytes in minimum frame
 #define DROPLET_MAX_DATA  128              // Max VSCP data (of possible 512 bytes) that a frame can hold
@@ -119,8 +127,9 @@ typedef struct {
   uint8_t nEncryption;          // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256
   bool bFilterAdjacentChannel;  // Don't receive if from other channel
   int filterWeakSignal;         // Filter onm RSSI (zero is no rssi filtering)
-  const uint8_t pmk[32];        // Primary master key (16 (EAS128)/24(AES192)/32(AES256))
-  const uint8_t nodeGuid[16];   // GUID for node.
+  const uint8_t *lkey;          // Pointer to 32 byte local key (16 (EAS128)/24(AES192)/32(AES256)) (Beta/Gammal nodes)
+  const uint8_t *pmk;           // Pointet tp 32 vbyte primary master key (16 (EAS128)/24(AES192)/32(AES256))
+  const uint8_t *nodeGuid;      // Pointer to 16 byte GUID for node.
 } droplet_config_t;
 
 /*
@@ -146,9 +155,12 @@ typedef struct {
  */
 typedef esp_err_t (*type_handle_t)(uint8_t *src_addr, void *data, size_t size, wifi_pkt_rx_ctrl_t *rx_ctrl);
 
-#define VSCP_HEART_BEAT_INTERVAL      30000 // Milliseconds between heartbeat events
-#define VSCP_INIT_HEART_BEAT_INTERVAL 500   // Milliseconds between heartbeat probe events
-#define VSCP_SET_KEY_INTERVAL         100   // Provisioning interval between set key events
+#define DROPLET_MSG_CACHE_SIZE           32    // Size for magic cache
+#define DROPLET_HEART_BEAT_INTERVAL      30000 // Milliseconds between heartbeat events
+#define DROPLET_INIT_LOOPS               2     // Number of all channel loops
+#define DROPLET_INIT_HEART_BEAT_INTERVAL 200   // Milliseconds between heartbeat probe events
+#define DROPLET_SET_KEY_INTERVAL         100   // Provisioning interval in ms between set key events
+#define DROPLET_SRV_SEND_KEY_CNT         3
 
 // Control states for droplet provisioning
 typedef enum { DROPLET_CTRL_INIT, DROPLET_CTRL_BOUND, DEOPLET_CTRL_MAX } droplet_ctrl_status_t;
@@ -173,6 +185,9 @@ typedef enum { DROPLET_CTRL_INIT, DROPLET_CTRL_BOUND, DEOPLET_CTRL_MAX } droplet
 
 // Callback for droplet received events
 typedef void (*vscp_event_handler_cb_t)(const vscpEvent *pev, void *userdata);
+
+// Callback for client node attach to network
+typedef void (*droplet_attach_network_handler_cb_t)(wifi_pkt_rx_ctrl_t *prxdata, void *userdata);
 
 // ----------------------------------------------------------------------------
 
@@ -208,7 +223,7 @@ esp_err_t
 droplet_send(const uint8_t *dest_addr,
              bool bPreserveHeader,
              uint8_t nEncrypt,
-             uint8_t *pkey,
+             const uint8_t *pkey,
              uint8_t ttl,
              uint8_t *data,
              size_t size,
@@ -258,25 +273,27 @@ droplet_build_l2_heartbeat(uint8_t *buf, uint8_t len, const uint8_t *pguid, cons
  * @fn droplet_sendEvent
  * @brief  Send event on droplet network
  *
+ * @param destAddr Destination address.
  * @param pev Event to send
  * @param wait_ms Time in milliseconds to wait for send
  * @return esp_err_t Error code. ESP_OK if all is OK.
  */
 
 esp_err_t
-droplet_sendEvent(vscpEvent *pev, uint8_t *pkey, uint32_t wait_ms);
+droplet_sendEvent(const uint8_t *destAddr, const vscpEvent *pev, const uint8_t *pkey, uint32_t wait_ms);
 
 /**
  * @fn droplet_sendEventEx
  * @brief Send event ex on droplet network
  *
+ * @param destAddr Destination address.
  * @param pex Pointer to event ex to send.
  * @param pkey Pointer to 32 bit key used for encryption.
  * @param wait_ms Time in milliseconds to wait for send
  * @return esp_err_t Error code. ESP_OK if all is OK.
  */
 esp_err_t
-droplet_sendEventEx(vscpEventEx *pex, uint8_t *pkey, uint32_t wait_ms);
+droplet_sendEventEx(const uint8_t *destAddr, const vscpEventEx *pex, const uint8_t *pkey, uint32_t wait_ms);
 
 /**
  * @fn droplet_getMinBufSizeEv
@@ -391,6 +408,51 @@ droplet_parse_vscp_json(vscpEvent *pev, const char *jsonVscpEventObj);
  */
 int
 droplet_create_vscp_json(char *strObj, size_t len, vscpEvent *pev);
+
+// void
+// droplet_client_provisioning_task(void *pvParameter);
+
+/**
+ * @fn droplet_isClientInit1Set
+ * @brief Check if client init event 1 has been received
+ *
+ * @return EventBits_t
+ */
+
+bool
+droplet_isClientInit1Set(void);
+
+/**
+ * @fn droplet_isClientInit2Set
+ * @brief Check if client init event 2 has been received
+ *
+ * @return EventBits_t
+ */
+
+bool
+droplet_isClientInit2Set(void);
+
+/**
+ * @fn droplet_startClientProvisioning
+ * @brief Start client provisioning task
+ *
+ * @return int VSCP_ERROR_SUCCESSif OK error code on failure.
+ */
+
+int
+droplet_startClientProvisioning(void);
+
+/**
+ * @fn droplet_startServerProvisioning
+ * @brief Start server provisioning task
+ *
+ * @param pmac Pointer to MAC address pf client node.
+ * @param pkey Pointer to local key of client node.
+ * @return int VSCP_ERROR_SUCCESSif OK error code on failure.
+ */
+
+int
+droplet_startServerProvisioning(const uint8_t *pmac, const uint8_t *pkey);
 
 #ifdef __cplusplus
 }

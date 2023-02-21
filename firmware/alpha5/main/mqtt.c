@@ -124,7 +124,7 @@ mqtt_send_vscp_event(const char *topic, const vscpEvent *pev)
     return rv;
   }
 
-  ESP_LOGI(TAG, "converted");
+  ESP_LOGV(TAG, "converted");
 
   /*
     {{node}}        - Node name
@@ -180,7 +180,6 @@ mqtt_send_vscp_event(const char *topic, const vscpEvent *pev)
   }
   vscp_fwhlp_strsubst(newTopic, sizeof(newTopic), saveTopic, "{{sindex}}", workbuf);
   strcpy(saveTopic, newTopic);
-  ESP_LOGI(TAG, "New topic %s", newTopic);
 
   // int msg_id =
   //   esp_mqtt_client_publish(g_mqtt_client, newTopic, pbuf, strlen(pbuf), g_persistent.mqttQos, g_persistent.mqttRetain);
@@ -189,10 +188,10 @@ mqtt_send_vscp_event(const char *topic, const vscpEvent *pev)
   int msgid = 
   esp_mqtt_client_enqueue(g_mqtt_client, newTopic, pbuf, strlen(pbuf), g_persistent.mqttQos, g_persistent.mqttRetain, true);
   if (-1 == msgid) {
-    ESP_LOGE(TAG, "Failed to publish MQTT message. id=%d", msgid);
+    ESP_LOGE(TAG, "Failed to publish MQTT message. id=%d Topic=%s", msgid, newTopic);
   }
   else {
-    ESP_LOGI(TAG, "Published MQTT message. id=%d", msgid);
+    ESP_LOGI(TAG, "Published MQTT message. id=%d topic=%s", msgid, newTopic);
   }
 
   VSCP_FREE(pbuf);

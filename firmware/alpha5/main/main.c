@@ -131,8 +131,8 @@ transport_t g_tr_mqtt                        = {}; // MQTT
 // Logging
 // int16_t g_write2Stdout = 0;     // Enable write to standard out
 
-//static void
-//vscp_heartbeat_task(void *pvParameter);
+// static void
+// vscp_heartbeat_task(void *pvParameter);
 static void
 vscp_espnow_send_task(void *pvParameter);
 
@@ -201,6 +201,7 @@ node_persistent_config_t g_persistent = {
 
   // General
   .nodeName   = "Alpha Node",
+  .lkey       = { 0 },
   .pmk        = { 0 },
   .nodeGuid   = { 0 }, // GUID for unit
   .startDelay = 2,
@@ -320,7 +321,7 @@ droplet_receive_cb(const vscpEvent *pev, void *userdata)
   // to client
   if (g_persistent.vscplinkEnable && strlen(g_persistent.vscplinkUrl)) {
     // Send event to active VSCP link clients
-    printf("Sending event to VSCP Link client\n");
+    ESP_LOGV(TAG, "Sending event to VSCP Link client\n");
     if (VSCP_ERROR_SUCCESS != (rv = tcpsrv_sendEventExToAllClients(pev))) {
       if (VSCP_ERROR_TRM_FULL == rv) {
         ESP_LOGI(TAG, "Failed to send event to tcpipsrv (queue is full for client)");
@@ -554,6 +555,21 @@ readPersistentConfigs(void)
   }
   // ESP_LOGI(TAG, "VSCP Password: %s", buf);
 
+  // lkey (Local key)
+  length = 32;
+  rv     = nvs_get_blob(g_nvsHandle, "lkey", g_persistent.lkey, &length);
+  if (rv != ESP_OK) {
+
+    // We need to generate a new lkey
+    esp_fill_random(g_persistent.lkey, sizeof(g_persistent.lkey));
+    ESP_LOGW(TAG, "----------> New lkey generated <----------");
+
+    rv = nvs_set_blob(g_nvsHandle, "lkey", g_persistent.lkey, 32);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to write node lkey to nvs. rv=%d", rv);
+    }
+  }
+
   // pmk (Primary key)
   length = 32;
   rv     = nvs_get_blob(g_nvsHandle, "pmk", g_persistent.pmk, &length);
@@ -575,15 +591,13 @@ readPersistentConfigs(void)
   rv     = nvs_get_blob(g_nvsHandle, "guid", g_persistent.nodeGuid, &length);
 
   if (rv != ESP_OK) {
-    g_persistent.nodeGuid[0] = 0xff;
-    g_persistent.nodeGuid[1] = 0xff;
-    g_persistent.nodeGuid[2] = 0xff;
-    g_persistent.nodeGuid[3] = 0xff;
-    g_persistent.nodeGuid[4] = 0xff;
-    g_persistent.nodeGuid[5] = 0xff;
-    g_persistent.nodeGuid[6] = 0xff;
+    // FF:FF:FF:FF:FF:FF:FF:FE:MAC1:MAC2:MAC3:MAC4:MAC5:MAC6:NICKNAME1:NICKNAME2
+    memset(g_persistent.nodeGuid+6, 0xff, 7);
     g_persistent.nodeGuid[7] = 0xfe;
-    rv                       = esp_efuse_mac_get_default(g_persistent.nodeGuid + 8);
+    //rv                       = esp_efuse_mac_get_default(g_persistent.nodeGuid + 8);
+    // ESP_MAC_WIFI_STA
+    // ESP_MAC_WIFI_SOFTAP
+    rv = esp_read_mac(g_persistent.nodeGuid + 8, ESP_MAC_WIFI_SOFTAP);
     if (rv != ESP_OK) {
       ESP_LOGE(TAG, "esp_efuse_mac_get_default failed to get GUID. rv=%d", rv);
     }
@@ -1037,7 +1051,7 @@ button_single_click_cb(void *arg, void *data)
   ESP_LOGI(TAG, "BTN%d: BUTTON_SINGLE_CLICK", get_btn_index((button_handle_t) arg));
 
   if (led_indicator_start(g_led_handle, BLINK_PROVISIONING) != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to start indicator lite");
+    ESP_LOGE(TAG, "Failed to start indicator light");
   }
 }
 
@@ -1497,7 +1511,7 @@ system_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, v
 
       case WIFI_EVENT_WIFI_READY: {
         // Set channel
-        ESP_ERROR_CHECK(esp_wifi_set_channel(DROPLET_CHANNEL, WIFI_SECOND_CHAN_NONE));
+        ESP_ERROR_CHECK(esp_wifi_set_channel(PRJDEF_DROPLET_CHANNEL, WIFI_SECOND_CHAN_NONE));
       } break;
 
       case WIFI_EVENT_STA_START: {
@@ -1532,10 +1546,12 @@ system_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, v
 
       case WIFI_EVENT_STA_DISCONNECTED: {
         ESP_LOGI(TAG, "sta disconnect");
-        s_sta_connected_flag = false;
-        ESP_LOGI(TAG, "Disconnected. Connecting to the AP again...");
-        g_state = MAIN_STATE_INIT;
-        esp_wifi_connect();
+        if (!s_sta_connected_flag) {
+          s_sta_connected_flag = false;
+          ESP_LOGI(TAG, "Disconnected. Connecting to the AP again...");
+          g_state = MAIN_STATE_INIT;
+          esp_wifi_connect();
+        }
         break;
       }
 #ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
@@ -1648,7 +1664,8 @@ led_task(void *pvParameter)
 
 //     ESP_LOGI(TAG, "Sending heartbeat.");
 //     ret =
-//       droplet_send(dest_addr, false, VSCP_ENCRYPTION_NONE, g_persistent.pmk, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
+//       droplet_send(dest_addr, false, VSCP_ENCRYPTION_NONE, g_persistent.pmk, 4, buf, DROPLET_MIN_FRAME + 3, 1000 /
+//       portTICK_PERIOD_MS);
 //     if (ret != ESP_OK) {
 //       ESP_LOGE(TAG, "Failed to send heartbeat. ret = %d", ret);
 //     }
@@ -1701,7 +1718,7 @@ app_main(void)
     .off_level = 0, // if zero, attach led positive side to esp32 gpio pin
     .mode      = LED_GPIO_MODE,
   };
-  led_indicator_handle_t g_led_handle = led_indicator_create(INDICATOR_LED_PIN, &indicator_config);
+  led_indicator_handle_t g_led_handle = led_indicator_create(PRJDEF_INDICATOR_LED_PIN, &indicator_config);
   if (NULL == g_led_handle) {
     ESP_LOGE(TAG, "Failed to create LED indicator");
   }
@@ -1713,8 +1730,8 @@ app_main(void)
         //.long_press_time = CONFIG_BUTTON_LONG_PRESS_TIME_MS,
         //.short_press_time = CONFIG_BUTTON_SHORT_PRESS_TIME_MS,
         .gpio_button_config = {
-            .gpio_num = 0,
-            .active_level = 0,
+            .gpio_num = PRJDEF_INIT_BUTTON_GPIO_PIN,
+            .active_level = PRJDEF_INIT_BUTTON_ACTIVE_LEVEL,
         },
     };
   g_btns[0] = iot_button_create(&btncfg);
@@ -1724,7 +1741,7 @@ app_main(void)
   iot_button_register_cb(g_btns[0], BUTTON_LONG_PRESS_HOLD, button_long_press_hold_cb, NULL);
 
   if (led_indicator_start(g_led_handle, BLINK_CONNECTING) != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to start indicator lite");
+    ESP_LOGE(TAG, "Failed to start indicator light");
   }
 
   // Initiate message queues
@@ -1822,7 +1839,7 @@ app_main(void)
   } // !provisioning
 
   if (led_indicator_start(g_led_handle, BLINK_CONNECTING) != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to start indicator lite");
+    ESP_LOGE(TAG, "Failed to start indicator light");
   }
 
   // Wait for Wi-Fi connection
@@ -1976,8 +1993,14 @@ app_main(void)
                                       .bForwardSwitchChannel  = g_persistent.dropletForwardSwitchChannel,
                                       .filterWeakSignal       = g_persistent.dropletFilterWeakSignal };
 
+  // Set local key
+  droplet_config.lkey = g_persistent.lkey;
+
   // Set primary key
-  memcpy(droplet_config.pmk, g_persistent.pmk, 32);
+  droplet_config.pmk = g_persistent.pmk;
+
+  // Set GUID
+  droplet_config.nodeGuid = g_persistent.nodeGuid;
 
   if (g_persistent.dropletEnable) {
     // Set callback for droplet receive events
@@ -1988,7 +2011,7 @@ app_main(void)
     }
 
     // Start heartbeat task vscp_heartbeat_task
-    //xTaskCreate(&vscp_heartbeat_task, "vscp_heartbeat_task", 4096, NULL, 5, NULL);
+    // xTaskCreate(&vscp_heartbeat_task, "vscp_heartbeat_task", 4096, NULL, 5, NULL);
   }
 
   ESP_LOGI(TAG, "espnow initializated");
@@ -2019,7 +2042,14 @@ app_main(void)
     ESP_LOGE(TAG, "Could not create heartbeat event, will exit task. VSCP rv %d", ret);
   }
 
-  ret = droplet_send(dest_addr, false, VSCP_ENCRYPTION_NONE, g_persistent.pmk, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
+  ret = droplet_send(dest_addr,
+                     false,
+                     VSCP_ENCRYPTION_NONE,
+                     g_persistent.pmk,
+                     4,
+                     buf,
+                     DROPLET_MIN_FRAME + 3,
+                     1000 / portTICK_PERIOD_MS);
   if (ESP_OK != ret) {
     ESP_LOGE(TAG, "Could not send droplet start event. rv %d", ret);
   }

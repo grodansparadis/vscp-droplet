@@ -95,11 +95,6 @@ typedef struct {
 #define DEFAULT_TCPIP_USER     "vscp"
 #define DEFAULT_TCPIP_PASSWORD "secret"
 #define DEFAULT_TCPIP_VER      4 // Ipv6 = 6 or Ipv4 = 4
-#define TCPSRV_WELCOME_MSG                                                                                             \
-  "Welcome to the %s node\r\n"                                                                                         \
-  "Copyright (C) 2000-2023 Åke Hedman, Grodans Paradis AB\r\n"                                                        \
-  "https://www.grodansparadis.com\r\n"                                                                                 \
-  "+OK\r\n"
 
 // UDP interface
 #define DEFAULT_UDP_ENABLE    true // Enabled
@@ -134,7 +129,8 @@ typedef struct {
 
   // Module
   char nodeName[32];    // User name for node
-  uint8_t pmk[32];      // Primary key (16 (EAS128)/24(AES192)/32(AES256))
+  uint8_t lkey[32];     // Local key (16 (EAS128)/24(AES192)/32(AES256))
+  uint8_t pmk[32];      // Primary key (16 (EAS128)/24(AES192)/32(AES256)) 
   uint8_t nodeGuid[16]; // GUID for node (default: Constructed from MAC address)
   uint8_t startDelay;   // Delay before wifi is enabled (to charge cap)
   uint32_t bootCnt;     // Number of restarts (not editable)

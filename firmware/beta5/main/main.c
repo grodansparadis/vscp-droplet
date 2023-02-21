@@ -87,13 +87,13 @@ extern const uint8_t server_cert_pem_end[] asm("_binary_ca_cert_pem_end");
 esp_netif_t *g_netif = NULL;
 
 // Holds alpha node states
-//beta_node_states_t g_state = MAIN_STATE_INIT;
+// beta_node_states_t g_state = MAIN_STATE_INIT;
 
 // Event source task related definitions
 ESP_EVENT_DEFINE_BASE(BETA_EVENT);
 
 // Handle for status led
-led_indicator_handle_t g_led_handle;
+led_indicator_handle_t g_led_handle = NULL;
 
 // Handle for nvs storage
 nvs_handle_t g_nvsHandle = 0;
@@ -113,7 +113,6 @@ static button_handle_t g_btns[BUTTON_CNT] = { 0 };
 
 static void
 vscp_heartbeat_task(void *pvParameter);
-
 
 enum {
   VSCP_SEND_STATE_NONE,
@@ -181,7 +180,8 @@ node_persistent_config_t g_persistent = {
   // General
   .bProvisioned = false, // Node rhas not been provisioned
   .nodeName     = "Beta Node",
-  .pmk          = { 0 }, // Primary key
+  .lkey         = { 0 }, // Local key for this node only
+  .pmk          = { 0 }, // Primary key (common to all nodes)
   .nodeGuid     = { 0 }, // GUID for unit
   .startDelay   = 2,
   .bootCnt      = 0,
@@ -359,6 +359,21 @@ readPersistentConfigs(void)
       break;
   }
 
+  // lkey (Local key)
+  length = 32;
+  rv     = nvs_get_blob(g_nvsHandle, "lkey", g_persistent.lkey, &length);
+  if (rv != ESP_OK) {
+
+    // We need to generate a new lkey
+    esp_fill_random(g_persistent.lkey, sizeof(g_persistent.lkey));
+    ESP_LOGW(TAG, "----------> New lkey generated <----------");
+
+    rv = nvs_set_blob(g_nvsHandle, "lkey", g_persistent.lkey, 32);
+    if (rv != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to write node lkey to nvs. rv=%d", rv);
+    }
+  }
+
   // pmk (Primary key)
   length = 32;
   rv     = nvs_get_blob(g_nvsHandle, "pmk", g_persistent.pmk, &length);
@@ -385,15 +400,13 @@ readPersistentConfigs(void)
   rv     = nvs_get_blob(g_nvsHandle, "guid", g_persistent.nodeGuid, &length);
 
   if (rv != ESP_OK) {
-    g_persistent.nodeGuid[0] = 0xff;
-    g_persistent.nodeGuid[1] = 0xff;
-    g_persistent.nodeGuid[2] = 0xff;
-    g_persistent.nodeGuid[3] = 0xff;
-    g_persistent.nodeGuid[4] = 0xff;
-    g_persistent.nodeGuid[5] = 0xff;
-    g_persistent.nodeGuid[6] = 0xff;
+    // FF:FF:FF:FF:FF:FF:FF:FE:MAC1:MAC2:MAC3:MAC4:MAC5:MAC6:NICKNAME1:NICKNAME2
+    memset(g_persistent.nodeGuid+6, 0xff, 7);
     g_persistent.nodeGuid[7] = 0xfe;
-    rv                       = esp_efuse_mac_get_default(g_persistent.nodeGuid + 8);
+    //rv                       = esp_efuse_mac_get_default(g_persistent.nodeGuid + 8);
+    // ESP_MAC_WIFI_STA
+    // ESP_MAC_WIFI_SOFTAP
+    rv = esp_read_mac(g_persistent.nodeGuid + 8, ESP_MAC_WIFI_SOFTAP);
     if (rv != ESP_OK) {
       ESP_LOGE(TAG, "esp_efuse_mac_get_default failed to get GUID. rv=%d", rv);
     }
@@ -560,8 +573,10 @@ button_single_click_cb(void *arg, void *data)
   // Initiate provisioning
   ESP_LOGI(TAG, "BTN%d: BUTTON_SINGLE_CLICK", get_btn_index((button_handle_t) arg));
 
+  droplet_startClientProvisioning();
+
   if (led_indicator_start(g_led_handle, BLINK_PROVISIONING) != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to start indicator lite");
+    ESP_LOGE(TAG, "Failed to start indicator light");
   }
 }
 
@@ -1113,11 +1128,12 @@ app_main(void)
 
   // Initialize LED indicator
   led_indicator_config_t indicator_config = {
-
     .off_level = 0, // if zero, attach led positive side to esp32 gpio pin
     .mode      = LED_GPIO_MODE,
   };
-  led_indicator_handle_t g_led_handle = led_indicator_create(INDICATOR_LED_PIN, &indicator_config);
+
+  ESP_LOGI(TAG, "Init. indicator subsystem");
+  g_led_handle = led_indicator_create(PRJDEF_INDICATOR_LED_PIN, &indicator_config);
   if (NULL == g_led_handle) {
     ESP_LOGE(TAG, "Failed to create LED indicator");
   }
@@ -1133,6 +1149,8 @@ app_main(void)
             .active_level = 0,
         },
     };
+
+  ESP_LOGI(TAG, "Init. button subsystem");
   g_btns[0] = iot_button_create(&btncfg);
   iot_button_register_cb(g_btns[0], BUTTON_SINGLE_CLICK, button_single_click_cb, NULL);
   iot_button_register_cb(g_btns[0], BUTTON_DOUBLE_CLICK, button_double_click_cb, NULL);
@@ -1140,7 +1158,7 @@ app_main(void)
   iot_button_register_cb(g_btns[0], BUTTON_LONG_PRESS_HOLD, button_long_press_hold_cb, NULL);
 
   if (led_indicator_start(g_led_handle, BLINK_CONNECTING) != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to start indicator lite");
+    ESP_LOGE(TAG, "Failed to start indicator light");
   }
 
   // ----------------------------------------------------------------------------
@@ -1208,10 +1226,6 @@ app_main(void)
   }
 
   if (led_indicator_start(g_led_handle, BLINK_CONNECTING) != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to start indicator lite");
-  }
-
-  if (led_indicator_start(g_led_handle, BLINK_CONNECTED) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to start indicator light");
   }
 
@@ -1300,11 +1314,14 @@ app_main(void)
                                       .bForwardSwitchChannel  = g_persistent.dropletForwardSwitchChannel,
                                       .filterWeakSignal       = g_persistent.dropletFilterWeakSignal };
 
+  // Set local key
+  droplet_config.lkey = g_persistent.lkey;
+
   // Set primary key
-  memcpy(droplet_config.pmk, g_persistent.pmk, 32);
+  droplet_config.pmk = g_persistent.pmk;
 
   // Set GUID
-  memcpy(droplet_config.nodeGuid, g_persistent.nodeGuid, 16);
+  droplet_config.nodeGuid = g_persistent.nodeGuid;
 
   // Set callback for droplet receive events
   droplet_set_vscp_user_handler_cb(droplet_receive_cb);
@@ -1313,12 +1330,9 @@ app_main(void)
     ESP_LOGE(TAG, "Failed to initialize espnow");
   }
 
-  
-
   ESP_LOGI(TAG, "espnow initializated");
 
   // startOTA();
-
 
   ESP_LOGI(TAG, "Going to work now!");
 
@@ -1332,7 +1346,14 @@ app_main(void)
     ESP_LOGE(TAG, "Could not create heartbeat event, will exit task. VSCP rv %d", ret);
   }
 
-  ret = droplet_send(dest_addr, false, VSCP_ENCRYPTION_NONE, g_persistent.pmk, 4, buf, DROPLET_MIN_FRAME + 3, 1000 / portTICK_PERIOD_MS);
+  ret = droplet_send(dest_addr,
+                     false,
+                     VSCP_ENCRYPTION_NONE,
+                     g_persistent.pmk,
+                     4,
+                     buf,
+                     DROPLET_MIN_FRAME + 3,
+                     1000 / portTICK_PERIOD_MS);
   if (ESP_OK != ret) {
     ESP_LOGE(TAG, "Could not send droplet start event. rv %X", ret);
   }

@@ -61,6 +61,10 @@ extern QueueHandle_t g_queueDroplet; // Received events from VSCP link clients
 // extern SemaphoreHandle_t g_droplet_send_lock; // From droplet
 //  extern vscpctx_t g_ctx[MAX_TCP_CONNECTIONS];
 
+// Constants from droplet
+extern const uint8_t DROPLET_ADDR_NONE[6];
+extern const uint8_t DROPLET_ADDR_BROADCAST[6];
+
 // ****************************************************************************
 //                       VSCP Link protocol callbacks
 // ****************************************************************************
@@ -68,6 +72,12 @@ extern QueueHandle_t g_queueDroplet; // Received events from VSCP link clients
 ///////////////////////////////////////////////////////////////////////////////
 // vscp_link_callback_write_client
 //
+
+#define TCPSRV_WELCOME_MSG                                                                                             \
+   "Welcome to the %s node\r\n"                                                                                         \
+   "Copyright (C) 2000-2023 Åke Hedman, Grodans Paradis AB\r\n"                                                        \
+   "https://www.grodansparadis.com\r\n"                                                                                 \
+   "+OK\r\n"
 
 int
 vscp_link_callback_welcome(const void *pdata)
@@ -382,7 +392,7 @@ vscp_link_callback_send(const void *pdata, vscpEvent *pev)
     pev->obid = pctx->id;
   }
 
-  if (ESP_OK != (ret = droplet_sendEvent(pev, NULL, 100))) {
+  if (ESP_OK != (ret = droplet_sendEvent(DROPLET_ADDR_BROADCAST, pev, NULL, 100))) {
     ESP_LOGE(TAG, "Failed to send event. rv = %d", ret);
     return VSCP_ERROR_ERROR;
   }
