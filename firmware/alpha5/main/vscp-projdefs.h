@@ -17,23 +17,26 @@
 // ----------------------------------------------------------------------------
 
 // Node type for this node
-#define PRJDEF_NODE_TYPE        VSCP_DROPLET_ALPHA      
+#define PRJDEF_NODE_TYPE VSCP_DROPLET_ALPHA
 
 // 16-bit nickname for node
 #define PRJDEF_NODE_NICKNAME 0
 
 // GPIO number for init button
-#define PRJDEF_INIT_BUTTON_GPIO_PIN    0
+#define PRJDEF_INIT_BUTTON_GPIO_PIN     0
 #define PRJDEF_INIT_BUTTON_ACTIVE_LEVEL 0
 
 // GPIO number for indicator LED
 #define PRJDEF_INDICATOR_LED_PIN 2
 
-// OTA mode
-// ESPNOW_OTA_INITATOR or ESPNOW_OTA_RESPONDEDER
+// OTA mode (ESPNOW_OTA_INITATOR or ESPNOW_OTA_RESPONDEDER)
 #define ESPNOW_OTA_MODE ESPNOW_OTA_INITATOR
+
 // URL of server which hosts the firmware image.
-#define PRJDEF_FIRMWARE_UPGRADE_URL "https://193.188.2.51:443/downloads/alpha/hello_world.bin"
+//#define PRJDEF_FIRMWARE_UPGRADE_URL "https://193.188.2.51:443/downloads/alpha/hello_world.bin"
+//#define PRJDEF_FIRMWARE_UPGRADE_URL "http://192.168.1.7:80/hello_world.bin"
+#define PRJDEF_FIRMWARE_UPGRADE_URL "https://eurosource.se:443/download/alpha//vscp_espnow_alpha.bin"
+//"https://eurosource.se:443/download/alpha/hello-world.bin", // CONFIG_FIRMWARE_UPGRADE_URL,
 
 // This allows you to skip the validation of OTA server certificate CN field.
 #define PRJDEF_SKIP_COMMON_NAME_CHECK false
@@ -52,7 +55,7 @@
 
 //
 // ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1 or ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2
-#define ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1
+//<<< #define ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1
 // #define ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2
 
 // This enables the production mode for security version 2.
@@ -111,7 +114,6 @@
 // When enable long range, the PHY rate of ESP32 will be 512Kbps or 256Kbps
 #define PRJDEF_ESPNOW_ENABLE_LONG_RANGE false
 
-
 /**
   ----------------------------------------------------------------------------
                               Access Point
@@ -119,17 +121,15 @@
 */
 
 // Channel for access point
-#define PRJDEF_AP_CHANNEL           8
+#define PRJDEF_AP_CHANNEL 8
 
-#define PRJDEF_AP_PASSWORD          ("secret")
+#define PRJDEF_AP_PASSWORD ("secret")
 
 // Maximum number of connetions to AP
-#define PRJDEF_AP_MAX_CONNECTIONS    1
+#define PRJDEF_AP_MAX_CONNECTIONS 1
 
 // Interval between beacon frames
-#define PRJDEF_AP_BEACON_INTERVAL    100
-
-
+#define PRJDEF_AP_BEACON_INTERVAL 100
 
 /**
   ----------------------------------------------------------------------------
@@ -174,7 +174,6 @@
  * set to zero.
  */
 #define PRJDEF_VSCP_LINK_ENABLE_RCVLOOP_CMD (1)
-
 
 /*!
   Name of device for level II capabilities announcement event.

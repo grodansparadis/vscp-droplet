@@ -836,8 +836,8 @@ upgrade_get_handler(httpd_req_t *req)
   sprintf(buf, "<div><form id=but3 class=\"button\" action='/upgrdsrv' method='get'><fieldset>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
-  sprintf(buf, "OTA URL:<input type=\"text\"  value=\"%s\" >", "https://eurosource.se/droplet/alpha.bin");
-  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN); 
+  sprintf(buf, "OTA URL:<input type=\"text\"  value=\"%s\" >", PRJDEF_FIRMWARE_UPGRADE_URL);
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);  
 
   sprintf(buf, "<button class=\"bgrn bgrn:hover\" >Start Upgrade</button></fieldset></form></div>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
@@ -876,21 +876,58 @@ upgrade_get_handler(httpd_req_t *req)
 static esp_err_t
 upgrdsrv_get_handler(httpd_req_t *req)
 {
-  const char *resp_str =
-    "<html><head><meta charset='utf-8'><meta name=\"viewport\" "
-    "content=\"width=device-width,initial-scale=1,user-scalable=no\" /><link rel=\"icon\" "
-    "href=\"favicon-32x32.png\"><title>Droplet Alpha node - Update</title><link rel=\"stylesheet\" href=\"style.css\" "
-    "/><meta http-equiv=\"refresh\" content=\"5;url=index.html\" /></head><body><div "
-    "style='text-align:left;display:inline-block;color:#eaeaea;min-width:340px;'><div "
-    "style='text-align:center;color:#eaeaea;'><h1>Upgrade from secure server...</h1></div></div></body></html>";
+  esp_err_t ret;
+  char *buf = NULL;
+  char *req_buf;
+  size_t req_buf_len;
+
+  buf = (char *) calloc(CHUNK_BUFSIZE, 1);
+  if (NULL == buf) {
+    return ESP_ERR_NO_MEM;
+  }
+
+  // Read URL query string length and allocate memory for length + 1,
+  // extra byte for null termination
+  req_buf_len = httpd_req_get_url_query_len(req) + 1;
+  if (req_buf_len > 1) {
+    req_buf = VSCP_MALLOC(req_buf_len);
+    if (httpd_req_get_url_query_str(req, req_buf, req_buf_len) == ESP_OK) {
+
+      ESP_LOGI(TAG, "Found URL query => %s", req_buf);
+      char *param = VSCP_MALLOC(WEBPAGE_PARAM_SIZE);
+      if (NULL == param) {
+        VSCP_FREE(req_buf);
+        VSCP_FREE(buf);
+        return ESP_ERR_ESPNOW_NO_MEM;
+      }
+
+      // URL
+      if (ESP_OK == (ret = httpd_query_key_value(req_buf, "url", param, WEBPAGE_PARAM_SIZE))) {
+        ESP_LOGI(TAG, "Found query parameter => url=%s", param);
+      }
+      else {
+        ESP_LOGE(TAG, "Error getting url => rv=%d", ret);
+      }
+
+      VSCP_FREE(param);
+
+    }
+
+    VSCP_FREE(req_buf);
+  }
+
+  VSCP_FREE(buf);
+
+  const char *resp_str = "<html><head><meta charset='utf-8'><meta http-equiv=\"refresh\" content=\"10;url=index.html\" "
+                         "/></head><body><h1>Firmware upgrade in progress...</h1></body></html>";
   httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
-
-  startOTA();
-
+  
   // Let content render
   vTaskDelay(2000 / portTICK_PERIOD_MS);
 
-  // esp_restart();
+  // Start the OTA task
+  startOTA();
+
   return ESP_OK;
 }
 
@@ -1297,7 +1334,7 @@ hello_get_handler(httpd_req_t *req)
 
   // Send response with custom headers and body set as the
   // string passed in user context
-  const char *resp_str = "Hi there mister mongo!"; //(const char *) req->user_ctx;
+  const char *resp_str = "Hi there mister m!"; //(const char *) req->user_ctx;
   httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
 
   // After sending the HTTP response the old HTTP request
@@ -1361,7 +1398,7 @@ mainpg_get_handler(httpd_req_t *req)
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
   sprintf(buf,
-          "<p><form id=but3 class=\"button\" action='upgrdsrv' method='get'><button>Firmware "
+          "<p><form id=but3 class=\"button\" action='upgrade' method='get'><button>Firmware "
           "Upgrade</button></form></p>");
   httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
 
@@ -2117,6 +2154,12 @@ do_config_droplet_get_handler(httpd_req_t *req)
         g_persistent.dropletEnable = false;
       }
 
+      // Write changed value to persistent storage
+      rv  = nvs_set_u8(g_nvsHandle, "drop_enable", g_persistent.dropletEnable);
+      if (rv != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update droplet enable");
+      }
+
       // Long range
       if (ESP_OK == (rv = httpd_query_key_value(buf, "lr", param, WEBPAGE_PARAM_SIZE))) {
         ESP_LOGI(TAG, "Found query parameter => lr=%s", param);
@@ -2402,6 +2445,12 @@ do_config_vscplink_get_handler(httpd_req_t *req)
         g_persistent.vscplinkEnable = false;
       }
 
+      // Write changed value to persistent storage
+      rv  = nvs_set_u8(g_nvsHandle, "vscp_enable", g_persistent.vscplinkEnable);
+      if (rv != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update vscp link enable");
+      }      
+
       // url
       if (ESP_OK == (rv = httpd_query_key_value(buf, "url", param, WEBPAGE_PARAM_SIZE))) {
         ESP_LOGI(TAG, "Found query parameter => url=%s", param);
@@ -2621,6 +2670,12 @@ do_config_mqtt_get_handler(httpd_req_t *req)
       else {
         g_persistent.mqttEnable = false;
       }
+
+      // Write changed value to persistent storage
+      nvs_set_u8(g_nvsHandle, "mqtt_enable", g_persistent.mqttEnable);
+      if (rv != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update MQTT enable");
+      }      
 
       // url
       if (ESP_OK == (rv = httpd_query_key_value(buf, "url", param, WEBPAGE_PARAM_SIZE))) {
@@ -2889,6 +2944,12 @@ do_config_web_get_handler(httpd_req_t *req)
       }
       else {
         g_persistent.webEnable = false;
+      }
+
+      // Write changed value to persistent storage
+      rv  = nvs_set_u8(g_nvsHandle, "web_enable", g_persistent.webEnable);
+      if (rv != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update web enable");
       }
 
       // port
@@ -3635,9 +3696,14 @@ default_get_handler(httpd_req_t *req)
     return reset_get_handler(req);
   }
 
+  if (0 == strncmp(req->uri, "/upgrade", 8)) {
+    ESP_LOGV(TAG, "--------- Upgrade main ---------\n");
+    return upgrade_get_handler(req);
+  }
+
   if (0 == strncmp(req->uri, "/upgrdsrv", 9)) {
     ESP_LOGV(TAG, "--------- Upgrade server ---------\n");
-    return upgrade_get_handler(req);
+    return upgrdsrv_get_handler(req);
   }
 
   if (0 == strncmp(req->uri, "/upgrdlocal", 11)) {
