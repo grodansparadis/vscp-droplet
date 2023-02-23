@@ -800,9 +800,81 @@ httpd_uri_t reset = { .uri = "/reset", .method = HTTP_GET, .handler = reset_get_
 //
 // HTTP GET handler for update of firmware
 //
+// - Server upgrade
+// - Local upgrade
+//
 
 static esp_err_t
 upgrade_get_handler(httpd_req_t *req)
+{
+  // esp_err_t rv;
+  char *buf;
+  char *temp;
+
+  buf = (char *) calloc(CHUNK_BUFSIZE, 1);
+  if (NULL == buf) {
+    return ESP_ERR_NO_MEM;
+  }
+
+  temp = (char *) calloc(80, 1);
+  if (NULL == temp) {
+    return ESP_ERR_NO_MEM;
+  }
+
+  esp_chip_info_t chip_info;
+  esp_chip_info(&chip_info);
+
+  // printf("Firmware version: %d\n", DROPLET_VERSION);
+  const esp_app_desc_t *appDescr = esp_app_get_description();
+
+  sprintf(buf, WEBPAGE_START_TEMPLATE, g_persistent.nodeName, "Upgrade firmware");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf,"<h3>Upgrade from web server</h3>");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf, "<div><form id=but3 class=\"button\" action='/upgrdsrv' method='get'><fieldset>");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf, "OTA URL:<input type=\"text\"  value=\"%s\" >", "https://eurosource.se/droplet/alpha.bin");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN); 
+
+  sprintf(buf, "<button class=\"bgrn bgrn:hover\" >Start Upgrade</button></fieldset></form></div>");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  // ----- Local -----
+
+  sprintf(buf,"<h3>Upgrade from local file</h3><div> <span style=\"color:red;font-family:verdana;font-size:300%%;\" id=\"progress\" /></div>");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf, "<div><fform id=but3 class=\"button\" action='/upgrdlocal' method='post'><fieldset>");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  //sprintf(buf, "Local file:<input style='display: inline-block;margin-left: 10px; margin-top: 10px; width: 70%%; z-index: 1;'type=\"text\" id=\"otafile\" name=\"otafile\" value=\"%s\" >", "local file path");
+  //httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN); 
+
+  //sprintf(buf, "<button  style='display: inline-block;width: 10%%; margin-top: 10px; position: relative; z-index: 1; background-color: #ffffff; border: 1px solid #dce4ec; color: #2c3e50' name=\"selectfile\"  >...</button>");
+  sprintf(buf, "<label for=\"otafile\">OTA firmware file:</label><input type=\"file\" id=\"otafile\" name=\"otafile\" />");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN); 
+
+  sprintf(buf, "<button class=\"bgrn bgrn:hover\" id=\"upload\" onclick=\"startUpload();\">Start Upgrade</button></fieldset></fform></div>");
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  sprintf(buf, WEBPAGE_END_TEMPLATE, appDescr->version, g_persistent.nodeName);
+  httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+
+  httpd_resp_send_chunk(req, NULL, 0);
+
+  VSCP_FREE(buf);
+  VSCP_FREE(temp);
+
+  return ESP_OK;
+}
+
+// httpd_uri_t upgrade = { .uri = "/upgrade", .method = HTTP_GET, .handler = upgrade_get_handler, .user_ctx = NULL };
+
+static esp_err_t
+upgrdsrv_get_handler(httpd_req_t *req)
 {
   const char *resp_str =
     "<html><head><meta charset='utf-8'><meta name=\"viewport\" "
@@ -822,37 +894,95 @@ upgrade_get_handler(httpd_req_t *req)
   return ESP_OK;
 }
 
-httpd_uri_t upgrade = { .uri = "/upgrade", .method = HTTP_GET, .handler = upgrade_get_handler, .user_ctx = NULL };
+///////////////////////////////////////////////////////////////////////////////
+// upgrdlocal_post_handler
+//
+// Handle OTA file upload
+// https://github.com/Jeija/esp32-softap-ota
+// 
+
+esp_err_t
+upgrdlocal_post_handler(httpd_req_t *req)
+{
+  char buf[1000];
+  esp_ota_handle_t ota_handle;
+  int remaining = req->content_len;
+
+  const esp_partition_t *ota_partition = esp_ota_get_next_update_partition(NULL);
+  ESP_ERROR_CHECK(esp_ota_begin(ota_partition, OTA_SIZE_UNKNOWN, &ota_handle));
+
+  while (remaining > 0) {
+    int recv_len = httpd_req_recv(req, buf, MIN(remaining, sizeof(buf)));
+
+    // Timeout Error: Just retry
+    if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) {
+      continue;
+
+      // Serious Error: Abort OTA
+    }
+    else if (recv_len <= 0) {
+      httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Protocol Error");
+      return ESP_FAIL;
+    }
+
+    // Successful Upload: Flash firmware chunk
+    if (esp_ota_write(ota_handle, (const void *) buf, recv_len) != ESP_OK) {
+      httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Flash Error");
+      return ESP_FAIL;
+    }
+
+    remaining -= recv_len;
+  }
+
+  // Validate and switch to new OTA image and reboot
+  if (esp_ota_end(ota_handle) != ESP_OK || esp_ota_set_boot_partition(ota_partition) != ESP_OK) {
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Validation / Activation Error");
+    return ESP_FAIL;
+  }
+
+  //httpd_resp_sendstr(req, "Firmware update complete, rebooting now!\n");
+  const char *resp_str = "<html><head><meta charset='utf-8'><meta http-equiv=\"refresh\" content=\"2;url=index.html\" "
+                         "/></head><body><h1>Firmware update complete, rebooting now!...</h1></body></html>";
+  httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
+
+  // Let content render
+  vTaskDelay(500 / portTICK_PERIOD_MS);
+  esp_restart();
+
+  return ESP_OK;
+}
+
+static const httpd_uri_t upgrdlocal = { .uri = "/upgrdlocal", .method = HTTP_POST, .handler = upgrdlocal_post_handler, .user_ctx = NULL };
 
 ///////////////////////////////////////////////////////////////////////////////
 // upgrdlocal_get_handler
 //
 // HTTP GET handler for update of firmware
-//
+// 
+// static esp_err_t
+// upgrdlocal_get_handler(httpd_req_t *req)
+// {
+//   const char *resp_str =
+//     "<html><head><meta charset='utf-8'><meta name=\"viewport\" "
+//     "content=\"width=device-width,initial-scale=1,user-scalable=no\" /><link rel=\"icon\" "
+//     "href=\"favicon-32x32.png\"><title>Droplet Alpha node - Update</title><link rel=\"stylesheet\" href=\"style.css\"
+//     "
+//     "/><meta http-equiv=\"refresh\" content=\"5;url=index.html\" /></head><body><div "
+//     "style='text-align:left;display:inline-block;color:#eaeaea;min-width:340px;'><div "
+//     "style='text-align:center;color:#eaeaea;'><h1>Upgrade local...</h1></div></div></body></html>";
+//   httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
 
-static esp_err_t
-upgrdlocal_get_handler(httpd_req_t *req)
-{
-  const char *resp_str =
-    "<html><head><meta charset='utf-8'><meta name=\"viewport\" "
-    "content=\"width=device-width,initial-scale=1,user-scalable=no\" /><link rel=\"icon\" "
-    "href=\"favicon-32x32.png\"><title>Droplet Alpha node - Update</title><link rel=\"stylesheet\" href=\"style.css\" "
-    "/><meta http-equiv=\"refresh\" content=\"5;url=index.html\" /></head><body><div "
-    "style='text-align:left;display:inline-block;color:#eaeaea;min-width:340px;'><div "
-    "style='text-align:center;color:#eaeaea;'><h1>Upgrade local...</h1></div></div></body></html>";
-  httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
+//   // Let content render
+//   vTaskDelay(2000 / portTICK_PERIOD_MS);
 
-  // Let content render
-  vTaskDelay(2000 / portTICK_PERIOD_MS);
+//   // esp_restart();
+//   return ESP_OK;
+// }
 
-  // esp_restart();
-  return ESP_OK;
-}
-
-httpd_uri_t upgrade_local = { .uri      = "/upgrade-local",
-                              .method   = HTTP_GET,
-                              .handler  = upgrdlocal_get_handler,
-                              .user_ctx = NULL };
+// httpd_uri_t upgrade_local = { .uri      = "/upgrade-local",
+//                               .method   = HTTP_GET,
+//                               .handler  = upgrdlocal_get_handler,
+//                               .user_ctx = NULL };
 
 ///////////////////////////////////////////////////////////////////////////////
 // provisioning_get_handler
@@ -979,7 +1109,7 @@ doprov_get_handler(httpd_req_t *req)
         VSCP_FREE(pkey);
         return ESP_ERR_ESPNOW_NO_MEM;
       }
-   
+
       // type
       if (ESP_OK == (ret = httpd_query_key_value(req_buf, "type", param, WEBPAGE_PARAM_SIZE))) {
         ESP_LOGI(TAG, "Found query parameter => type=%s", param);
@@ -1001,7 +1131,7 @@ doprov_get_handler(httpd_req_t *req)
         }
         ESP_LOGI(TAG, "Found query parameter => mac=%s", pdecoded);
         int rv;
-        if ( VSCP_ERROR_SUCCESS != (rv = vscp_fwhlp_parseMac(pmac, pdecoded, NULL))) {
+        if (VSCP_ERROR_SUCCESS != (rv = vscp_fwhlp_parseMac(pmac, pdecoded, NULL))) {
           ESP_LOGI(TAG, "Failed to parse MAC address. ev = %d", rv);
         }
         ESP_LOG_BUFFER_HEXDUMP(TAG, pmac, 6, ESP_LOG_INFO);
@@ -1255,6 +1385,8 @@ mainpg_get_handler(httpd_req_t *req)
   return ESP_OK;
 }
 
+
+
 // static const httpd_uri_t mainpg = { .uri     = "/index.html",
 //                                    .method  = HTTP_GET,
 //                                    .handler = mainpg_get_handler,
@@ -1467,6 +1599,9 @@ do_config_module_get_handler(httpd_req_t *req)
         ESP_LOGI(TAG, "Found query parameter => name=%s", pdecoded);
         strncpy(g_persistent.nodeName, pdecoded, 31);
         VSCP_FREE(pdecoded);
+
+        setAccessPointParameters();
+
         // Write changed value to persistent storage
         rv = nvs_set_str(g_nvsHandle, "node_name", g_persistent.nodeName);
         if (rv != ESP_OK) {
@@ -3505,9 +3640,9 @@ default_get_handler(httpd_req_t *req)
     return upgrade_get_handler(req);
   }
 
-  if (0 == strncmp(req->uri, "/upgrdlocal", 10)) {
+  if (0 == strncmp(req->uri, "/upgrdlocal", 11)) {
     ESP_LOGV(TAG, "--------- Upgrade local ---------\n");
-    return upgrdlocal_get_handler(req);
+    return upgrdlocal_post_handler(req);
   }
 
   if (0 == strncmp(req->uri, "/provisioning", 13)) {
@@ -3641,6 +3776,8 @@ start_webserver(void)
     // httpd_register_uri_handler(srv, &ctrl);
     // httpd_register_uri_handler(srv, &mainpg);
     httpd_register_uri_handler(srv, &dflt);
+
+    httpd_register_uri_handler(srv, &upgrdlocal);
 
     // httpd_register_uri_handler(srv, &config);
     //  httpd_register_uri_handler(srv, &cfgModule);

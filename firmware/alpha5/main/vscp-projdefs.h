@@ -92,10 +92,10 @@
 // #define DROPLET_SESSION_POP    "ESPNOW VSCP node ver 1"
 
 // ESPNOW primary master for the example to use. The length of ESPNOW primary master must be 16 bytes.
-#define PRJDEF_DROPLET_PMK "pmk1234567890123"
+#define PRJDEF_DROPLET_PMK "A4A86F7D7E119BA3F0CD06881E371B989B33B6D606A863B633EF529D64544F8E"
 
 // ESPNOW local master for the example to use. The length of ESPNOW local master must be 16 bytes.
-#define PRJDEF_DROPLET_LMK "lmk1234567890123"
+#define PRJDEF_DROPLET_LMK "A4A86F7D7E119BA3F0CD06881E371B989B33B6D606A863B633EF529D64544F8E"
 
 // Select the ESP-NOW Sec Mode.
 // ESPNOW_SEC_INITATOR or ESPNOW_SEC_RESPONDER
@@ -111,6 +111,32 @@
 // When enable long range, the PHY rate of ESP32 will be 512Kbps or 256Kbps
 #define PRJDEF_ESPNOW_ENABLE_LONG_RANGE false
 
+
+/**
+  ----------------------------------------------------------------------------
+                              Access Point
+  ----------------------------------------------------------------------------
+*/
+
+// Channel for access point
+#define PRJDEF_AP_CHANNEL           8
+
+#define PRJDEF_AP_PASSWORD          ("secret")
+
+// Maximum number of connetions to AP
+#define PRJDEF_AP_MAX_CONNECTIONS    1
+
+// Interval between beacon frames
+#define PRJDEF_AP_BEACON_INTERVAL    100
+
+
+
+/**
+  ----------------------------------------------------------------------------
+                              VSCP TCP/IP Link
+  ----------------------------------------------------------------------------
+*/
+
 /*!
   Max buffer for level II events. The buffer size is needed to
   convert an event to string. To handle all level II events
@@ -119,7 +145,7 @@
   case one should check the max data size for events that are of
   interest and set the max size accordingly
 */
-#define VSCP_LINK_MAX_BUF (2680)
+#define PRJDEF_VSCP_LINK_MAX_BUF (2680)
 
 /*!
   Define to show custom help. The callback is called so you can respond
@@ -133,28 +159,22 @@
 /**
  * Undefine to send incoming events to all clients (default).
  */
-#define VSCP_LINK_SEND_TO_ALL
+#define PRJDEF_VSCP_LINK_SEND_TO_ALL
 
 /*!
   Size for inout buffer and outputbuffer.
   Must be at least one for each fifo
 */
-#define VSCP_LINK_MAX_IN_FIFO_SIZE  (10)
-#define VSCP_LINK_MAX_OUT_FIFO_SIZE (10)
+#define PRJDEF_VSCP_LINK_MAX_IN_FIFO_SIZE  (10)
+#define PRJDEF_VSCP_LINK_MAX_OUT_FIFO_SIZE (10)
 
 /**
  * Enable command also when rcvloop is active
  * Only 'quit' and 'quitloop' will work if
  * set to zero.
  */
-#define VSCP_LINK_ENABLE_RCVLOOP_CMD (1)
+#define PRJDEF_VSCP_LINK_ENABLE_RCVLOOP_CMD (1)
 
-/**
-  ----------------------------------------------------------------------------
-                              VSCP TCP/IP Link
-  ----------------------------------------------------------------------------
-  Defines for firmware level II
-*/
 
 /*!
   Name of device for level II capabilities announcement event.

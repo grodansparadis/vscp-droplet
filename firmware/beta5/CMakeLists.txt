@@ -8,4 +8,4 @@ set(PROJECT_VER "0.0.1")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
-project(vscp_espnow_alpha)
+project(vscp_espnow_beta)

@@ -127,9 +127,9 @@ typedef struct {
   uint8_t nEncryption;          // 0=no encryption, 1=AES-128, 2=AES-192, 3=AES-256
   bool bFilterAdjacentChannel;  // Don't receive if from other channel
   int filterWeakSignal;         // Filter onm RSSI (zero is no rssi filtering)
-  const uint8_t *lkey;          // Pointer to 32 byte local key (16 (EAS128)/24(AES192)/32(AES256)) (Beta/Gammal nodes)
-  const uint8_t *pmk;           // Pointet tp 32 vbyte primary master key (16 (EAS128)/24(AES192)/32(AES256))
-  const uint8_t *nodeGuid;      // Pointer to 16 byte GUID for node.
+  uint8_t *lkey;                // Pointer to 32 byte local key (16 (EAS128)/24(AES192)/32(AES256)) (Beta/Gammal nodes)
+  uint8_t *pmk;                 // Pointer tp 32 byte primary master key (16 (EAS128)/24(AES192)/32(AES256))
+  uint8_t *nodeGuid;            // Pointer to 16 byte GUID for node.
 } droplet_config_t;
 
 /*
@@ -369,9 +369,10 @@ int
 droplet_frameToEx(vscpEventEx *pex, const uint8_t *buf, uint8_t len, uint32_t timestamp);
 
 /**
+ * @fn droplet_set_vscp_user_handler_cb
  * @brief Set the VSCP event receive handler callback
  *
- * @param cb Callback
+ * @param cb Callback that can do work when when a VSCP event is received.
  *
  * Set the VSCP event receive handler callback
  *
@@ -380,11 +381,30 @@ void
 droplet_set_vscp_user_handler_cb(vscp_event_handler_cb_t *cb);
 
 /**
- * @brief Clear VSCP handler event recive handler callback
+ * @fn droplet_clear_vscp_handler_cb
+ * @brief Clear VSCP event receive handler callback
  *
  */
 void
 droplet_clear_vscp_handler_cb(void);
+
+/**
+ * @fn droplet_set_attach_network_handler_cb
+ * @brief Set handler callback for network attach
+ *
+ * @param cb Callback that can do work when network attach occur.
+ */
+
+void
+droplet_set_attach_network_handler_cb(droplet_attach_network_handler_cb_t *cb);
+
+/**
+ * @fn droplet_clear_attach_network_handler_cb
+ * @brief Clear handler callback for network attach
+ *
+ */
+void
+droplet_clear_attach_network_handler_cb(void);
 
 /**
  * @fn droplet_parse_vscp_json

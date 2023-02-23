@@ -786,7 +786,7 @@ droplet_sendEventEx(const uint8_t *destAddr, const vscpEventEx *pex, const uint8
     return ESP_ERR_NO_MEM;
   }
 
-  if (VSCP_ERROR_SUCCESS != (rv = droplet_evToFrame(pbuf, DROPLET_MIN_FRAME + pex->sizeData, pex))) {
+  if (VSCP_ERROR_SUCCESS != (rv = droplet_exToFrame(pbuf, DROPLET_MIN_FRAME + pex->sizeData, pex))) {
     VSCP_FREE(pbuf);
     ESP_LOGE(TAG, "Failed to convert event to frame. rv=%d", rv);
     return ESP_ERR_INVALID_ARG;
@@ -822,7 +822,7 @@ droplet_sendEventEx(const uint8_t *destAddr, const vscpEventEx *pex, const uint8
 esp_err_t
 droplet_init(const droplet_config_t *config)
 {
-  void *p;
+  //void *p;
   // esp_err_t ret = ESP_FAIL;
 
   s_stateDroplet = DROPLET_STATE_IDLE;
@@ -953,7 +953,7 @@ droplet_rcv_task(void *arg)
       // Copy back decrypted payload data
       memcpy(prxdata->payload, pdata, size);
 
-      VSCP_FREE(*pdata);
+      VSCP_FREE(pdata);
     }
 
     // Check if we have already received this frame
@@ -1025,14 +1025,18 @@ droplet_rcv_task(void *arg)
       // clang-format off
 
       // * * * Provisioning events * * *
+      
       ESP_LOGD(TAG,"++++++++++++++++++++++++++++++++++++++++++++++++++  state=%d", s_stateDroplet);
       ESP_LOG_BUFFER_HEXDUMP(TAG, prxdata->src_addr, ESP_NOW_ETH_ALEN, ESP_LOG_DEBUG);
       ESP_LOG_BUFFER_HEXDUMP(TAG, prxdata->dst_addr, ESP_NOW_ETH_ALEN, ESP_LOG_DEBUG);
       ESP_LOG_BUFFER_HEXDUMP(TAG, s_provisionNodeInfo.mac, ESP_NOW_ETH_ALEN, ESP_LOG_DEBUG);
+
       if (DROPLET_STATE_CLIENT_INIT == s_stateDroplet) {
+        
         // Is this event addressed to us?
         ESP_LOGD(TAG, "Size for init event %d", pev->sizeData);
         ESP_LOG_BUFFER_HEXDUMP(TAG, pev->pdata, pev->sizeData, ESP_LOG_DEBUG);
+
         if (!memcmp(prxdata->dst_addr, s_droplet_config.nodeGuid + 8, ESP_NOW_ETH_ALEN) &&
           ((2+16+32) == pev->sizeData) && 
           (/*VSCP_CLASS2_SECURITY*/ 1034 == pev->vscp_class) &&
@@ -1048,9 +1052,35 @@ droplet_rcv_task(void *arg)
             s_droplet_attach_network_handler_cb(&(prxdata->rx_ctrl), NULL);
           }
 
+          esp_err_t ret = 0;
+          uint8_t buf[DROPLET_MIN_FRAME + 3]; // Three byte data
+          size_t size = sizeof(buf);
+
+          // Create Heartbeat event
+          if (VSCP_ERROR_SUCCESS != (ret = droplet_build_l1_heartbeat(buf, size, s_droplet_config.nodeGuid))) {
+            ESP_LOGE(TAG, "Could not create heartbeat event, will exit task. VSCP rv %d", ret);
+            goto CONTINUE;
+          }
+  
+          ret = droplet_send(DROPLET_ADDR_BROADCAST,
+                                  false,
+                                  VSCP_ENCRYPTION_NONE,
+                                  s_droplet_config.pmk,
+                                  4,
+                                  buf,
+                                  DROPLET_MIN_FRAME + 3,
+                                  10 / portTICK_PERIOD_MS);
+
+          if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to send heartbeat. ret = %X", ret);
+          }
+
           s_stateDroplet = DROPLET_STATE_IDLE;
-        }
-      }
+
+        } // init match
+
+      } // DROPLET_STATE_CLIENT_INIT
+
       // Heartbeat from node under initialization
       else if ((DROPLET_STATE_SRV_INIT1 == s_stateDroplet) && 
                (VSCP_CLASS1_PROTOCOL == pev->vscp_class) &&
@@ -1071,7 +1101,8 @@ droplet_rcv_task(void *arg)
         // Call event callback and let it do it's work
         s_vscp_event_handler_cb(pev, NULL);
       }
-      // clang-format on
+
+// clang-format on
     }
 
   CONTINUE:
@@ -1377,6 +1408,7 @@ droplet_send(const uint8_t *dest_addr,
 
   xEventGroupClearBits(s_droplet_event_group, DROPLET_SEND_CB_OK_BIT | DROPLET_SEND_CB_FAIL_BIT);
 
+  ESP_LOGI(TAG,"esp_now_send " MACSTR " len=%d", MAC2STR(dest_addr), frame_len);
   ret = esp_now_send(dest_addr, outbuf, frame_len);
   if (ret == ESP_OK) {
 
@@ -1432,6 +1464,26 @@ droplet_clear_vscp_handler_cb(void)
   s_vscp_event_handler_cb = NULL;
 }
 
+///////////////////////////////////////////////////////////////////////////////
+// droplet_set_attach_network_handler_cb
+//
+
+void
+droplet_set_attach_network_handler_cb(droplet_attach_network_handler_cb_t *cb)
+{
+  s_droplet_attach_network_handler_cb = cb;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// droplet_clear_attach_network_handler_cb
+//
+
+void
+droplet_clear_attach_network_handler_cb(void)
+{
+  s_droplet_attach_network_handler_cb = NULL;
+}
+
 int
 droplet_probe(void)
 {
@@ -1464,7 +1516,6 @@ static void
 droplet_heartbeat_task(void *pvParameter)
 {
   esp_err_t ret = 0;
-  // uint8_t dest_addr[ESP_NOW_ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
   uint8_t buf[DROPLET_MIN_FRAME + 3]; // Three byte data
   size_t size = sizeof(buf);
 

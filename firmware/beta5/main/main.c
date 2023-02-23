@@ -271,6 +271,40 @@ droplet_receive_cb(const vscpEvent *pev, void *userdata)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// droplet_network_attach_cb
+//
+
+void
+droplet_network_attach_cb(wifi_pkt_rx_ctrl_t *prxdata, void *userdata)
+{
+  esp_err_t ret;
+
+  // Set Channel
+  g_persistent.dropletChannel = prxdata->channel;
+  ret                         = nvs_set_u8(g_nvsHandle, "drop_ch", g_persistent.dropletChannel);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to update droplet channel ret = %X", ret);
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// setAccessPointParameters
+//
+
+esp_err_t
+setAccessPointParameters(void)
+{
+  wifi_config_t wifi_cfg = { .ap = { .channel         = PRJDEF_AP_CHANNEL,
+                                     .max_connection  = PRJDEF_AP_MAX_CONNECTIONS,
+                                     .beacon_interval = PRJDEF_AP_BEACON_INTERVAL,
+                                     .authmode        = WIFI_AUTH_WPA_WPA2_PSK,
+                                     /*.ssid_hidden     = 1*/ } };
+  memcpy(wifi_cfg.ap.ssid, g_persistent.nodeName, strlen(g_persistent.nodeName));
+  memcpy(wifi_cfg.ap.password, PRJDEF_AP_PASSWORD, strlen(PRJDEF_AP_PASSWORD));
+  return esp_wifi_set_config(WIFI_IF_AP, &wifi_cfg);
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // readPersistentConfigs
 //
 
@@ -401,11 +435,11 @@ readPersistentConfigs(void)
 
   if (rv != ESP_OK) {
     // FF:FF:FF:FF:FF:FF:FF:FE:MAC1:MAC2:MAC3:MAC4:MAC5:MAC6:NICKNAME1:NICKNAME2
-    memset(g_persistent.nodeGuid+6, 0xff, 7);
+    memset(g_persistent.nodeGuid + 6, 0xff, 7);
     g_persistent.nodeGuid[7] = 0xfe;
-    //rv                       = esp_efuse_mac_get_default(g_persistent.nodeGuid + 8);
-    // ESP_MAC_WIFI_STA
-    // ESP_MAC_WIFI_SOFTAP
+    // rv                       = esp_efuse_mac_get_default(g_persistent.nodeGuid + 8);
+    //  ESP_MAC_WIFI_STA
+    //  ESP_MAC_WIFI_SOFTAP
     rv = esp_read_mac(g_persistent.nodeGuid + 8, ESP_MAC_WIFI_SOFTAP);
     if (rv != ESP_OK) {
       ESP_LOGE(TAG, "esp_efuse_mac_get_default failed to get GUID. rv=%d", rv);
@@ -459,7 +493,7 @@ readPersistentConfigs(void)
     }
   }
 
-  g_persistent.dropletChannel = 9;
+  // g_persistent.dropletChannel = 9;    // TODO for test
 
   // Default queue size
   rv = nvs_get_u8(g_nvsHandle, "drop_qsize", &g_persistent.dropletSizeQueue);
@@ -967,6 +1001,23 @@ beta_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, voi
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// wifi_event_handler
+//
+
+static void
+wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
+{
+  if (event_id == WIFI_EVENT_AP_STACONNECTED) {
+    wifi_event_ap_staconnected_t *event = (wifi_event_ap_staconnected_t *) event_data;
+    ESP_LOGI(TAG, "station " MACSTR " join, AID=%d", MAC2STR(event->mac), event->aid);
+  }
+  else if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
+    wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *) event_data;
+    ESP_LOGI(TAG, "station " MACSTR " leave, AID=%d", MAC2STR(event->mac), event->aid);
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // system_event_handler
 //
 // Event handler for catching system events
@@ -1110,6 +1161,7 @@ led_task(void *pvParameter)
 void
 app_main(void)
 {
+  esp_err_t ret;
   uint8_t dest_addr[ESP_NOW_ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
   uint8_t buf[DROPLET_MIN_FRAME + 3]; // Three byte data
   size_t size = sizeof(buf);
@@ -1199,8 +1251,7 @@ app_main(void)
                                                              beta_event_handler,
                                                              NULL));
     */
-  // Initialize Wi-Fi including netif with default config
-  // g_netif = esp_netif_create_default_wifi_sta();
+  
 
   if (led_indicator_start(g_led_handle, BLINK_PROVISIONING) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to start indicator light");
@@ -1212,12 +1263,26 @@ app_main(void)
 
   ESP_ERROR_CHECK(esp_netif_init());
   ESP_ERROR_CHECK(esp_event_loop_create_default());
+  g_netif = esp_netif_create_default_wifi_ap();  
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-  ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+  //ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
+  //ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+  
+  // Configure AP paramters
+  if (ESP_OK != (ret = setAccessPointParameters())) {
+    ESP_LOGE(TAG, "Unable top set AP parameters. rv =%X", ret);
+  }
+
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
   ESP_ERROR_CHECK(esp_wifi_start());
-  ESP_ERROR_CHECK(esp_wifi_set_channel(g_persistent.dropletChannel, WIFI_SECOND_CHAN_NONE));
+
+  if (g_persistent.dropletChannel) {
+    ret = esp_wifi_set_channel(g_persistent.dropletChannel, WIFI_SECOND_CHAN_NONE);
+    if (ESP_OK != ret) {
+      ESP_LOGE(TAG, "Failed to set channel %d ret=%X", g_persistent.dropletChannel, ret);
+    }
+  }
 
   if (g_persistent.dropletLongRange) {
     ESP_ERROR_CHECK(
@@ -1242,7 +1307,7 @@ app_main(void)
                                        .format_if_mount_failed = true };
 
   // Initialize and mount SPIFFS filesystem.
-  esp_err_t ret = esp_vfs_spiffs_register(&spiffsconf);
+  ret = esp_vfs_spiffs_register(&spiffsconf);
 
   if (ret != ESP_OK) {
     if (ret == ESP_FAIL) {
@@ -1326,6 +1391,9 @@ app_main(void)
   // Set callback for droplet receive events
   droplet_set_vscp_user_handler_cb(droplet_receive_cb);
 
+  // Set callback for droplet node network attach
+  droplet_set_attach_network_handler_cb(droplet_network_attach_cb);
+
   if (ESP_OK != droplet_init(&droplet_config)) {
     ESP_LOGE(TAG, "Failed to initialize espnow");
   }
@@ -1336,27 +1404,9 @@ app_main(void)
 
   ESP_LOGI(TAG, "Going to work now!");
 
-  // vTaskDelay(5000 / portTICK_PERIOD_MS);
-
   /*
     Start main application loop now
   */
-
-  if (VSCP_ERROR_SUCCESS != (ret = droplet_build_l1_heartbeat(buf, size, g_persistent.nodeGuid))) {
-    ESP_LOGE(TAG, "Could not create heartbeat event, will exit task. VSCP rv %d", ret);
-  }
-
-  ret = droplet_send(dest_addr,
-                     false,
-                     VSCP_ENCRYPTION_NONE,
-                     g_persistent.pmk,
-                     4,
-                     buf,
-                     DROPLET_MIN_FRAME + 3,
-                     1000 / portTICK_PERIOD_MS);
-  if (ESP_OK != ret) {
-    ESP_LOGE(TAG, "Could not send droplet start event. rv %X", ret);
-  }
 
   /* const char *obj = "{"
      "\"vscpHead\": 2,"

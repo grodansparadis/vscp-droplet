@@ -337,6 +337,24 @@ droplet_receive_cb(const vscpEvent *pev, void *userdata)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// setAccessPointParameters
+//
+
+esp_err_t
+setAccessPointParameters(void)
+{
+  wifi_config_t wifi_cfg = { .ap = {
+                               .channel = PRJDEF_AP_CHANNEL,
+                               .max_connection  = PRJDEF_AP_MAX_CONNECTIONS,
+                               .beacon_interval = PRJDEF_AP_BEACON_INTERVAL,
+                               .ssid_hidden = 1,
+                             } };
+  memcpy(wifi_cfg.ap.ssid, g_persistent.nodeName, strlen(g_persistent.nodeName));
+  memcpy(wifi_cfg.ap.password, PRJDEF_AP_PASSWORD, strlen(PRJDEF_AP_PASSWORD));
+  return esp_wifi_set_config(WIFI_IF_AP, &wifi_cfg);
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // readPersistentConfigs
 //
 
@@ -592,11 +610,11 @@ readPersistentConfigs(void)
 
   if (rv != ESP_OK) {
     // FF:FF:FF:FF:FF:FF:FF:FE:MAC1:MAC2:MAC3:MAC4:MAC5:MAC6:NICKNAME1:NICKNAME2
-    memset(g_persistent.nodeGuid+6, 0xff, 7);
+    memset(g_persistent.nodeGuid + 6, 0xff, 7);
     g_persistent.nodeGuid[7] = 0xfe;
-    //rv                       = esp_efuse_mac_get_default(g_persistent.nodeGuid + 8);
-    // ESP_MAC_WIFI_STA
-    // ESP_MAC_WIFI_SOFTAP
+    // rv                       = esp_efuse_mac_get_default(g_persistent.nodeGuid + 8);
+    //  ESP_MAC_WIFI_STA
+    //  ESP_MAC_WIFI_SOFTAP
     rv = esp_read_mac(g_persistent.nodeGuid + 8, ESP_MAC_WIFI_SOFTAP);
     if (rv != ESP_OK) {
       ESP_LOGE(TAG, "esp_efuse_mac_get_default failed to get GUID. rv=%d", rv);
@@ -1690,6 +1708,7 @@ led_task(void *pvParameter)
 void
 app_main(void)
 {
+  esp_err_t ret;
   uint8_t dest_addr[ESP_NOW_ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
   uint8_t buf[DROPLET_MIN_FRAME + 3]; // Three byte data
   size_t size = sizeof(buf);
@@ -1821,15 +1840,18 @@ app_main(void)
     ESP_LOGI(TAG, "Deinit wifi manager");
     wifi_prov_mgr_deinit();
 
-    ESP_LOGI(TAG, "???????????????????????????????????????????????????????????????");
-
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &system_event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &system_event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(ALPHA_EVENT, ESP_EVENT_ANY_ID, &system_event_handler, NULL));
 
     // Start Wi-Fi soft ap & station
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA)); // Only APSTA is possible with esp-now working!!!
     ESP_ERROR_CHECK(esp_wifi_start());
+
+    // Configure AP paramters
+    if (ESP_OK != (ret = setAccessPointParameters())) {
+      ESP_LOGE(TAG, "Unable top set AP parameters. rv =%X",ret); 
+    }
 
     if (g_persistent.dropletLongRange) {
       ESP_ERROR_CHECK(
@@ -1922,7 +1944,7 @@ app_main(void)
                                        .format_if_mount_failed = true };
 
   // Initialize and mount SPIFFS filesystem.
-  esp_err_t ret = esp_vfs_spiffs_register(&spiffsconf);
+  ret = esp_vfs_spiffs_register(&spiffsconf);
 
   if (ret != ESP_OK) {
     if (ret == ESP_FAIL) {

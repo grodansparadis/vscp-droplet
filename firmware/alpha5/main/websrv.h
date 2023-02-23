@@ -99,6 +99,85 @@
 // https://codebeautify.org/css-beautify-minify
 #define WEBPAGE_STYLE_CSS "div,fieldset,input,select{padding: 5px;font-size: 1.0em}fieldset{background: #4b4b4e}p{margin: 0.5em 0}input{width: 100%%;box-sizing: border-box;-webkit-box-sizing: border-box;-moz-box-sizing: border-box;background: #dddddd;color: #000000}input[type=checkbox],input[type=radio]{width: 1em;margin-right: 6px;vertical-align: -1px}input[type=range]{width: 99%%}select{width: 100%%;background: #dddddd;color: #000000}textarea{resize: vertical;width: 98%%;height: 318px;padding: 5px;overflow: auto;background: #e9e6e6;color: #65c115b6}body{text-align: center;font-family: verdana, sans-serif;background: #252525}button{border: 1;border-radius: 0.5rem;background: #d3d3d0;color: #000000;line-height: 2.4rem;font-size: 1.2rem;width: 100%%;-webkit-transition-duration: 0.7s;transition-duration: 0.7s;cursor: pointer}button:hover{background: #375733}.bred{background: #d43535}.bred:hover{background: #931f1f}.bgrn{background: #47c266}.bgrn:hover{background: #296939}.byell{background: #f0ee81}.byell:hover{background: #68642e}a{color: #1fa3ec;text-decoration: none}.p{float: left;text-align: left}.q{float: right;text-align: right}.r{border-radius: 0.3em;padding: 2px;margin: 6px 2px}.hf{display: none}td{padding-left: 30px;padding-right: 15px}.name{font-family: Arial, Helvetica, sans-serif;font-size: small;font-weight: bold;color: #2c54aa}.prop{font-family: Arial, Helvetica, sans-serif;font-size: small;font-weight: lighter;color: #a7aca7}.infoheader{font-family: Arial, Helvetica, sans-serif;font-size: normal;font-weight: lighter;color: #f7f1a6}"
 
+/*
+// https://github.com/Jeija/esp32-softap-ota/blob/master/main/web/index.html
+function startUpload() {
+				var otafile = document.getElementById("otafile").files;
+
+				if (otafile.length == 0) {
+					alert("No file selected!");
+				} else {
+					document.getElementById("otafile").disabled = true;
+					document.getElementById("upload").disabled = true;
+
+					var file = otafile[0];
+					var xhr = new XMLHttpRequest();
+					xhr.onreadystatechange = function() {
+						if (xhr.readyState == 4) {
+							if (xhr.status == 200) {
+								document.open();
+								document.write(xhr.responseText);
+								document.close();
+							} else if (xhr.status == 0) {
+								alert("Server closed the connection abruptly!");
+								location.reload()
+							} else {
+								alert(xhr.status + " Error!\n" + xhr.responseText);
+								location.reload()
+							}
+						}
+					};
+
+					xhr.upload.onprogress = function (e) {
+						var progress = document.getElementById("progress");
+						progress.textContent = "Progress: " + (e.loaded / e.total * 100).toFixed(0) + "%";
+					};
+					xhr.open("POST", "/update", true);
+					xhr.send(file);
+				}
+			}
+*/
+
+#define TTT "function startUpload() { " \
+"	var otafile = document.getElementById('otafile').files; " \
+" " \
+"	if (otafile.length == 0) { " \
+"		alert('No file selected!'); " \
+"	} else {" \
+"		document.getElementById('otafile').disabled = true; " \
+"		document.getElementById('upload').disabled = true; " \
+" " \
+"		var file = otafile[0]; " \
+"		var xhr = new XMLHttpRequest(); " \
+" " \
+"		xhr.onreadystatechange = function() { " \
+"			if (xhr.readyState == 4) { " \
+"				if (xhr.status == 200) { " \
+"					document.open(); " \
+"					document.write(xhr.responseText); " \
+"					document.close(); " \
+"				} else if (xhr.status == 0) { " \
+"					alert('Server closed the connection abruptly!'); " \
+"					location.reload() " \
+"				} else { " \
+"					alert(xhr.status + ' Error!' + xhr.responseText); " \
+"					location.reload() " \
+"				} " \
+"			} " \
+"		}; " \
+" " \
+"		xhr.upload.onprogress = function (e) { " \
+"			var progress = document.getElementById('progress'); " \
+"			progress.textContent = 'Progress: ' + (e.loaded / e.total * 100).toFixed(0) + '%%'; " \
+"		}; " \
+" } " \
+" alert(\"hello\");" \
+"}"
+
+
+
+#define WEBPAGE_JS "function startUpload(){var e,t=document.getElementById(\"otafile\").files;0==t.length?alert(\"No file selected!\"):(document.getElementById(\"otafile\").disabled=!0,document.getElementById(\"upload\").disabled=!0,t=t[0],(e=new XMLHttpRequest).onreadystatechange=function(){4==e.readyState&&(200==e.status?(document.open(),document.write(e.responseText),document.close()):(0==e.status?alert(\"Server closed the connection abruptly!\"):alert(e.status+\" Error!\"+e.responseText),location.reload()))},e.upload.onprogress=function(e){document.getElementById(\"progress\").textContent=\"Progress: \"+(e.loaded/e.total*100).toFixed(0)+\"%%\"},e.open(\"POST\",\"/upgrdlocal\",!0),e.send(t))}"
+
 /*>>
   Page start HTML
   Parameter 1: Page head
@@ -108,7 +187,11 @@
 */
 #define WEBPAGE_START_TEMPLATE "<!DOCTYPE html><html lang=\"en\" class=\"\"><head><meta charset='utf-8'>" \
 "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,user-scalable=no\" />" \
-"<title>Droplet Alpha node - Main Menu</title><style>" \
+"<title>Droplet Alpha node - Main Menu</title>"\
+"<script>" \
+WEBPAGE_JS \
+"</script>" \
+"<style>" \
 WEBPAGE_STYLE_CSS \
 "</style>" \
 "<link href=\"data:image/x-icon;base64," \

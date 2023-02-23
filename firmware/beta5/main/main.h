@@ -190,6 +190,15 @@ void
 droplet_receive_cb(const vscpEvent *pev, void *userdata);
 
 /**
+ * @fn setApParameters
+ * @brief Set Access Point Parameters 
+ * 
+ * @return esp_err_t ESP_OK on success, errorcode otherwise.
+ */
+esp_err_t
+setAccessPointParameters(void);
+
+/**
  * @brief Read processor on chip temperature
  * @return Temperature as floating point value
  */
