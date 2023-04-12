@@ -1,5 +1,10 @@
 # vscp-droplet
 
+***IMPORTANT*** - 
+This project is now continued as [vscp-espnow](https://github.com/grodansparadis/vscp-espnow).
+
+---
+
 A VERY simple self forming network for wireless VSCP nodes
 
 Warning!  
